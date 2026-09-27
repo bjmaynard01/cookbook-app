@@ -113,7 +113,18 @@ The line-granularity splitter (`parse_v2.py`) produced a correct ingredients/dir
 
 ## 6. Decisions needed before implementation
 
-1. **Include the 14 unmenued + 1 draft?** Recommended: migrate **all 388 published recipes** (data preservation), auto-assign the 14 to a catch-all "Others" category so none are orphaned; exclude the 1 empty draft. *(Owner to confirm.)*
+> **Status (2026-09-27) — all three resolved by the owner, recorded in the spec's
+> decision log (`docs/superpowers/specs/2026-09-20-cookbook-design.md` §13):**
+> 1. **Include all 388 published recipes**; the 14 unmenued ones are auto-assigned
+>    a catch-all **"Others"** category. (DL-1)
+> 2. **Deterministic-only body split for v1** — no LLM on the migration path. (DL-2)
+> 3. **Body model = ordered `section[]`** (heading?, kind, lines), so
+>    `Topping:`/`Filling:`/layer structure survives. (DL-3)
+> Plus a fourth owner decision made in the same exchange: **categories are data,
+> never hardcoded** — editor CRUD, seed-not-constant, owner-orderable on the home
+> page. (DL-4)
+
+1. **Include the 14 unmenued + 1 draft?** Recommended: migrate **all 388 published recipes** (data preservation), auto-assign the 14 to a catch-all "Others" category so none are orphaned; exclude the 1 empty draft. *(Owner to confirm. → CONFIRMED: all 388, "Others".)*
 2. **LLM fallback for the ingredients/directions split (open §12 item):** the deterministic heuristic above handles the corpus well. An LLM is only needed if you want "smarter" free-text interpretation. **Not required for a correct migration.** *(Owner to confirm deterministic-only for v1.)*
 3. **Sub-section granularity:** adopt `section[]` (ordered list of {heading?, kind: ingredients|steps|note, lines[]}) as the body model so `Topping:`/`Filling:`/layer structure is preserved rather than flattened. *(Recommended; confirm.)*
 
