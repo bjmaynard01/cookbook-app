@@ -1,0 +1,6 @@
+# Python — spikes use throwaway scripts on the system python
+__pycache__/
+*.pyc
+
+# WordPress source export: large binary-ish input, not part of the app
+wp-exports/
