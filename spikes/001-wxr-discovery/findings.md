@@ -108,8 +108,8 @@ The line-granularity splitter (`parse_v2.py`) produced a correct ingredients/dir
 - **12 near-duplicate title pairs** (legitimately two versions, distinct slugs, e.g. `taco-soup` / `taco-soup-2`, `taco-casserole` / `604`, `chicken-cordon-bleu-casserole` / `…-2`, two "Ricotta Stuffed Shells", two "Mexican Rice", two "Taco Bake", two "Texas Roadhouse Rolls", two "Banana Pudding poke Cake", two "Chocolate Gravy", two "Cinnamon Roll Cake", two "Duke's Secret Salsa"). Faithful migration keeps both; dedupe is an owner call.
 - **6 broken/numeric/trashed slugs** (66, 365, 604, 121, 154, and `__trashed-2` for 1787) → slug must be regenerated from the title.
 - **31 orphaned attachments** (no real parent) → skip or archive during media migration.
-- **Spam to drop:** 14 Korean massage-parlor tags (term ids 20–35) + 5 `_stcr@_…` comment-spam meta keys.
-- **19 comments across 14 posts** (family/friends Q&A, all `approved=1`). v1 scope decision (open §12 item) unchanged: default = out; they're in the WXR if needed later.
+- **Spam to drop:** 16 Korean massage-parlor tags (term ids 20–35) + 5 `_stcr@_…` comment-spam meta keys.
+- **20 comments across 14 posts** (family/friends Q&A, all `approved=1`). v1 scope decision (open §12 item) unchanged: default = out; they're in the WXR if needed later.
 
 ## 6. Decisions needed before implementation
 
