@@ -4,3 +4,18 @@ __pycache__/
 
 # WordPress source export: large binary-ish input, not part of the app
 wp-exports/
+
+# Local env (dev values); .env.example is the committed template
+.env
+
+# Local venv (uv); uv.lock IS committed — the Dockerfile builds with --frozen
+.venv/
+
+# Editable-install build artifacts (uv `--frozen` install generates these)
+*.egg-info/
+
+# Reference tree (verified source copies, not part of the app)
+reference/
+
+# Local media scratch dir if the app is run off-Docker in dev
+media/

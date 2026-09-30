@@ -1,0 +1,55 @@
+# Dev environment, full two-service shape (spec 9.1).
+# All persistent state lives under /mnt/container/<container_name> on the host:
+#   /mnt/container/db   -> MariaDB data dir
+#   /mnt/container/app  -> media uploads
+# No named or anonymous volumes. Secrets come from .env (git-ignored).
+#
+# For the PRODUCTION deploy where you point the app at an EXISTING MariaDB,
+# remove/ignore the db service and just set DB_HOST/DB_PORT/DB_NAME/
+# DB_USER/DB_PASSWORD in .env — the app code is identical.
+services:
+  db:
+    image: mariadb:11
+    container_name: db
+    env_file: .env
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD missing}
+      MARIADB_DATABASE: ${DB_NAME:?DB_NAME missing}
+      MARIADB_USER: ${DB_USER:?DB_USER missing}
+      MARIADB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD missing}
+    volumes:
+      - /mnt/container/db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cookbook:dev
+    container_name: app
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${APP_BIND_PORT:-8000}:8000"
+    env_file: .env
+    environment:
+      # App reaches MariaDB by the compose service name "db". This is the
+      # SAME mechanism prod uses, just pointed at your existing instance:
+      #   prod .env -> DB_HOST=<your-mariadb-host>
+      DB_HOST: db
+      DB_PORT: "3306"
+      DB_NAME: ${DB_NAME:?}
+      DB_USER: ${DB_USER:?}
+      DB_PASSWORD: ${DB_PASSWORD:?}
+      MEDIA_DIR: /media
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY missing}
+      SESSION_TTL_HOURS: "12"
+    volumes:
+      - /mnt/container/app:/media
+    restart: unless-stopped
