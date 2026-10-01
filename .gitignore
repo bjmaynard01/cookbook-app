@@ -2,6 +2,9 @@
 __pycache__/
 *.pyc
 
+# pytest cache (local run artifacts)
+.pytest_cache/
+
 # WordPress source export: large binary-ish input, not part of the app
 wp-exports/
 
