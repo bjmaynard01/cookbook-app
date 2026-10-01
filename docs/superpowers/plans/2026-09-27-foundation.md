@@ -490,7 +490,7 @@ git commit -m "test: /healthz + /readyz healthy and 503 shapes (spec §9.5)"
 - Consumes (Task 1): `cookbook.models.Base`, `cookbook.models.User`, `cookbook.db.get_engine()`, `cookbook.db.session_scope()`
 
 **Interfaces:**
-- Consumes: `User` columns per `reference/foundation-verified/src/cookbook/models.py`: `id` CHAR(36) PK, `username` VARCHAR(60) UNIQUE NOT NULL, `password_hash` VARCHAR(255) NOT NULL, `display_name` VARCHAR(100) NULL, `role` VARCHAR(10) NOT NULL (default `editor`), `is_active` BOOLEAN NOT NULL (default True), `created_at`/`updated_at` DATETIME `server_default=func.now()`.
+- Consumes: `User` columns per `reference/foundation-verified/src/cookbook/models.py`: `id` VARCHAR(36) PK (owner decision DL-5), `username` VARCHAR(60) UNIQUE NOT NULL, `password_hash` VARCHAR(255) NOT NULL, `display_name` VARCHAR(100) NULL, `role` VARCHAR(10) NOT NULL (default `editor`), `is_active` BOOLEAN NOT NULL (default True), `created_at`/`updated_at` DATETIME `server_default=func.now()`.
 - Produces: a green `tests/test_models.py` executed against the dev `db` container's `cookbook` schema — independently proving the v0 migration produced the exact spec §3.5 shape.
 
 **Execution location:** the dev `db` container publishes NO host port (compose is deliberate — host reachability to the dev DB is not part of the contract). Therefore these tests run **inside the `app` container**, where `DB_HOST=db` + the compose network already connect to it. `uv.lock` pins `pytest`, `anyio`, `pytest-asyncio`, `respx` (the dev group in `pyproject.toml`), which is why the image ships them.
@@ -536,7 +536,7 @@ def test_users_table_shape() -> None:
             ))
             cols = {row[0]: {"type": row[1], "nullable": row[2]} for row in res}
             assert set(cols) == EXPECTED_COLUMNS, f"columns: {set(cols)}"
-            assert cols["id"]["type"] == "char(36)"
+            assert cols["id"]["type"] == "varchar(36)"
             assert cols["username"]["type"] == "varchar(60)"
             assert cols["username"]["nullable"] == "NO"
             assert cols["password_hash"]["nullable"] == "NO"
@@ -579,7 +579,7 @@ def test_user_roundtrip() -> None:
     asyncio.run(run())
 ```
 
-Notes: `session_scope()` is an async context manager (verified in `reference/foundation-verified/src/cookbook/db.py`) — the outer `async with` exits, then `session.commit()` runs, so the row is durable before the second `session_scope` reads it. `await session.get(User, uid)` is the async ORM API. Column types are asserted as MariaDB reports them (`char(36)`, `varchar(60)`) — the migration file (hash `92bd6f0a…`) is the contract.
+Notes: The promoted `session_scope()` implementation is currently an undecorated async generator, so the planned `async with` use requires `@asynccontextmanager` in `src/cookbook/db.py` before this test can validate the real API. `await session.get(User, uid)` is the async ORM API. Column types are asserted as MariaDB reports them (`varchar(36)`, `varchar(60)`); DL-5 accepts the v0 migration's UUID column type.
 
 - [ ] **Step 2: Bring up the dev stack and run the tests inside the app container**
 

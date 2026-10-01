@@ -46,13 +46,13 @@ Success looks like:
 
 ## 3. §1 — Data Model
 
-Single MariaDB database named `cookbook`. SQLAlchemy 2.0 (async, `asyncmy` driver) + Alembic. All IDs are UUIDv4 stored as `CHAR(36)`. Timestamps are `DATETIME` UTC.
+Single MariaDB database named `cookbook`. SQLAlchemy 2.0 (async, `asyncmy` driver) + Alembic. UUIDv4 IDs and their foreign keys are stored as `VARCHAR(36)`. Timestamps are `DATETIME` UTC.
 
 ### 3.1 `recipes`
 
 | column | type | notes |
 |---|---|---|
-| `id` | CHAR(36) PK | **Immutable** — identity, never changes (D3) |
+| `id` | VARCHAR(36) PK | **Immutable** — identity, never changes (D3) |
 | `slug` | VARCHAR(200) UNIQUE NOT NULL | Editable; generated from title at save time only; on rename the old `/r/<old-slug>` path is recorded in `recipe_url_aliases` |
 | `title` | VARCHAR(300) NOT NULL | required for save |
 | `description` | TEXT NULL | intro/notes prose |
@@ -71,7 +71,7 @@ Single MariaDB database named `cookbook`. SQLAlchemy 2.0 (async, `asyncmy` drive
 | `imported_at` | DATETIME NULL | when this source was pulled in |
 | `published_date` | DATE NULL | original publication date (WXR post date) |
 | `image_path` | VARCHAR(500) NULL | hero image on the media volume; one image per recipe in v1 |
-| `created_by` / `last_modified_by` | CHAR(36) NULL FK `users.id` | attribution only (D10) |
+| `created_by` / `last_modified_by` | VARCHAR(36) NULL FK `users.id` | attribution only (D10) |
 | `created_at` / `updated_at` | DATETIME NOT NULL | |
 
 Constraint: `UNIQUE (source_system, source_id)` — MariaDB permits multiple NULL `source_id` rows, so web recipes with no source ID are unaffected. This is the importer idempotency key (D5, D8).
@@ -80,8 +80,8 @@ Constraint: `UNIQUE (source_system, source_id)` — MariaDB permits multiple NUL
 
 | column | type | notes |
 |---|---|---|
-| `id` | CHAR(36) PK | |
-| `recipe_id` | CHAR(36) FK → `recipes.id` ON DELETE CASCADE | |
+| `id` | VARCHAR(36) PK | |
+| `recipe_id` | VARCHAR(36) FK → `recipes.id` ON DELETE CASCADE | |
 | `position` | INT NOT NULL | display order; unique per recipe |
 | `raw_text` | TEXT NOT NULL | **source of truth** (D4); verbatim line from whatever origin |
 | `quantity_text` | VARCHAR(50) NULL | best-effort parse ("1 1/2") |
@@ -106,14 +106,14 @@ The eight initial categories are seeded from the WordPress site (EVIDENCE): Brea
 
 ### 3.5 Identity & auth
 
-- `users`: `id`, `username` VARCHAR(60) UNIQUE NOT NULL (case-insensitive unique), `password_hash` NOT NULL (argon2id), `display_name` VARCHAR(100), `role` VARCHAR(10) NOT NULL (`editor`|`admin`), `is_active` BOOLEAN NOT NULL DEFAULT TRUE, `created_at`, `updated_at`.
+- `users`: `id` VARCHAR(36) PK, `username` VARCHAR(60) UNIQUE NOT NULL (case-insensitive unique), `password_hash` NOT NULL (argon2id), `display_name` VARCHAR(100), `role` VARCHAR(10) NOT NULL (`editor`|`admin`), `is_active` BOOLEAN NOT NULL DEFAULT TRUE, `created_at`, `updated_at`.
 - `sessions`: `id_hash` CHAR(64) PK (SHA-256 of the raw session token — raw token never stored), `user_id` FK, `csrf_token` CHAR(32) NOT NULL, `created_ip` VARCHAR(45), `created_at`, `last_seen_at`, `expires_at`. Sliding 12 h idle TTL (config `SESSION_TTL_HOURS`).
 - `login_attempts`: `id`, `username` VARCHAR(60), `ip` VARCHAR(45), `attempts` INT NOT NULL, `locked_until` DATETIME NULL — per-IP+username lockout state (§6.6). The `users.failed_logins`/`locked_until` columns are dropped; this table is the lockout store.
-- `recipe_url_aliases`: `id`, `path` VARCHAR(255) UNIQUE NOT NULL — the full legacy URL path as observed, e.g. `/?p=1869` or `/?page_id=16`; `recipe_id` CHAR(36) NULL FK; `category_id` CHAR(36) NULL FK; CHECK exactly one of the two is non-NULL; `created_at`. Served by an app-side middleware issuing **301** to the canonical URL (D6, D17).
+- `recipe_url_aliases`: `id`, `path` VARCHAR(255) UNIQUE NOT NULL — the full legacy URL path as observed, e.g. `/?p=1869` or `/?page_id=16`; `recipe_id` VARCHAR(36) NULL FK; `category_id` VARCHAR(36) NULL FK; CHECK exactly one of the two is non-NULL; `created_at`. Served by an app-side middleware issuing **301** to the canonical URL (D6, D17).
 
 ### 3.6 Migration audit
 
-- `migration_runs`: `id`, `started_at`, `finished_at` NULL, `source_file` VARCHAR(500), `file_sha256` CHAR(64) NULL, `status` VARCHAR(20) (`running`|`completed`|`failed`), `recipes_total`/`recipes_imported`/`recipes_skipped`/`recipes_errors` INT, `images_ok`/`images_failed` INT, `operator_id` CHAR(36) NULL, `notes` TEXT.
+- `migration_runs`: `id`, `started_at`, `finished_at` NULL, `source_file` VARCHAR(500), `file_sha256` CHAR(64) NULL, `status` VARCHAR(20) (`running`|`completed`|`failed`), `recipes_total`/`recipes_imported`/`recipes_skipped`/`recipes_errors` INT, `images_ok`/`images_failed` INT, `operator_id` VARCHAR(36) NULL, `notes` TEXT.
 - `migration_recipe_log`: `id`, `run_id` FK, `source_post_id` VARCHAR(64) NULL, `recipe_id` NULL FK, `outcome` VARCHAR(20) (`imported`|`skipped`|`error`), `detail` TEXT.
 - `migration_tag_log` not needed — tags in v1 migration are not present on the WordPress source (free-form categories only); ingest and manual entry supply tags later. (If the discovery spike finds tag-like structure, the importer will record it in `migration_recipe_log.detail` and a follow-up decision follows.)
 
@@ -409,6 +409,7 @@ Owner decisions recorded after [Spike 001 — WXR Discovery](../../spikes/001-wx
 | DL-2 | **WP import body split is deterministic-only** for v1 (the spike's heading-first + heuristic splitter). No LLM on the migration path. The LLM fallback (OpenAI-compatible) applies **only** to web ingestion (§4). | §5 unchanged; §12 item 1 scoped to web ingest. |
 | DL-3 | **Body model = ordered `section[]`.** A recipe body is an ordered list of sections: `{heading?, kind: 'ingredients'\|'steps'\|'note', lines[]}`. `Topping:` / `Filling:` / layer groupings survive rather than being flattened into two buckets. `raw_text`-first (D4) applies to every line in every section. | **Supersedes** the flat single-table shapes in §3.2 / §3.3 for the *shape of the store*: the implementation plan locks the exact tables (sections + ordered items, position unique per section). D4 (raw_text NOT NULL, parse columns nullable, ingestion never mutates raw_text) is unchanged and applies to all item kinds. |
 | DL-4 | **Categories are data, never hardcoded.** Editor CRUD on categories (already D9/§7.4) plus: the eight WordPress menu categories are **seed data**, not constants; the home "by category" lane lists whatever exists in the `categories` table in an owner-manageable order. New categories can be created for recipes at any time; deleting a category with members must not lose the recipes' other membership (and the UI must say what happens). | §7.1 home lane reworded: "by category (the seeded eight, plus any owner-added, in owner order)." Schema: `categories` gains an order mechanism and a guard for in-use deletion; exact behavior is locked in the implementation plan. Seed set (initial rows): Breakfast, Fermentation, Appetizers, Drinks, Main Dishes, Side Dishes, Baking, Desserts — **plus "Others"** (seeded by the §5.2 import when it assigns the 14 unmenued). |
+| DL-5 | **UUIDv4 identifiers use `VARCHAR(36)`.** Confirmed by the owner on 2026-10-01 after Task 4 found that the v0 `users` migration creates `VARCHAR(36)`. | Replaces the earlier `CHAR(36)` wording for UUID IDs and their foreign keys throughout §3. Fixed-length hashes and tokens retain their separately specified `CHAR` types. |
 
 Also carried through (no new decision; confirming spike facts that close spec questions):
 
