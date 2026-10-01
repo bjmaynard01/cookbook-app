@@ -88,28 +88,34 @@ def test_users_table_shape() -> None:
             assert cols["updated_at"]["type"] == "datetime"
             assert cols["updated_at"]["nullable"] == "NO"
 
-            # Index-level assertions: (column, index_name) for every
-            # non-unique (PK/UNIQUE) index on the table.
+            # Index-level assertions with column order (seq_in_index) so the
+            # complete column list of each unique index is pinned, not just
+            # which index a column appears in.
             res2 = await conn.execute(text(
-                "SELECT column_name, index_name FROM information_schema.statistics "
+                "SELECT index_name, column_name, seq_in_index "
+                "FROM information_schema.statistics "
                 "WHERE table_schema = DATABASE() AND table_name = 'users' "
-                "AND non_unique = 0"
+                "AND non_unique = 0 "
+                "ORDER BY index_name, seq_in_index"
             ))
-            col_to_index = {row[0]: row[1] for row in res2}
+            index_columns: dict[str, list[str]] = {}
+            for row in res2:
+                index_columns.setdefault(row[0], []).append(row[1])
 
-            # `id` is the primary key — under MariaDB `information_schema`,
+            # `id` is the primary key and contains ONLY id — under MariaDB
             # the PK index on InnoDB is named `PRIMARY`.
-            assert col_to_index.get("id") == "PRIMARY", (
-                f"id is not the primary key: {col_to_index}"
+            assert index_columns.get("PRIMARY") == ["id"], (
+                f"PRIMARY key columns: {index_columns.get('PRIMARY')!r}"
             )
-            # `username` has its own UNIQUE constraint: a non-unique index
-            # that is NOT the primary key (its own named unique index).
-            username_index = col_to_index.get("username")
-            assert username_index is not None, (
-                f"no non-unique index on username: {col_to_index}"
+            # `username` has its own separate UNIQUE index containing ONLY
+            # username: exactly one non-PK unique index with that column list.
+            username_indexes = sorted(
+                name for name, cols in index_columns.items()
+                if name != "PRIMARY" and cols == ["username"]
             )
-            assert username_index != "PRIMARY", (
-                f"username's unique index is unexpectedly the PK: {col_to_index}"
+            assert len(username_indexes) == 1, (
+                f"expected exactly one unique index on only username, "
+                f"got: {index_columns}"
             )
 
     try:

@@ -2,7 +2,8 @@
 
 v0 carries only the ``users`` table — enough to exercise the Alembic ->
 MariaDB migrations path in the foundation plan. All other models land in the
-data-model plan. PKs are CHAR(36) UUIDv4 (spec section 3), DATETIME UTC.
+data-model plan. PKs are VARCHAR(36) UUIDv4 (spec section 3, DL-5),
+DATETIME UTC.
 """
 from __future__ import annotations
 
