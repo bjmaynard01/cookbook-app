@@ -22,3 +22,5 @@ reference/
 
 # Local media scratch dir if the app is run off-Docker in dev
 media/
+
+*SESSION-HANDOFF*
