@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from functools import lru_cache
 
 from sqlalchemy.ext.asyncio import (
@@ -31,6 +32,7 @@ def get_session() -> async_sessionmaker[AsyncSession]:
     return async_sessionmaker(bind=get_engine(), expire_on_commit=False)
 
 
+@asynccontextmanager
 async def session_scope() -> AsyncIterator[AsyncSession]:
     """Request-scoped session: commit on success, rollback on error."""
     factory = get_session()

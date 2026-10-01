@@ -4,40 +4,28 @@
 Requires: dev stack up (`docker compose up -d`), migrations applied (the app
 entrypoint does this at boot).
 
-Task 4 findings (2026-10-01, from `task/4-user-model-tests` on `main` bf4669d):
+Follow-up (2026-09-27 → 2026-10-01): the owner resolved the id-type wording —
+UUID ids and their FKs are `VARCHAR(36)` (spec + plan updated in f2a5750,
+Decision Log DL-5) — so this file pins exactly `varchar(36)` for `users.id`.
 
-1. `users.id` is `varchar(36)` on the live server — `sa.String(36)` renders as
-   VARCHAR under the MySQL-family dialect. Spec §2/§3.5 says `CHAR(36) PK`.
-   CHAR(36)/VARCHAR(36) are functionally equivalent here (36-char UUID, no
-   CHAR padding semantics in play), so this test accepts either keyword and
-   pins the length. Flagged as a spec-vs-migration wording mismatch for the
-   owner; the test guards what v0 actually produced.
+`session_scope` in `cookbook.db` was originally written as a bare
+`async def ... yield` without `@asynccontextmanager`, so
+`async with session_scope()` raised `TypeError: 'async_generator' object does
+not support the asynchronous context manager protocol` (first reproduced with
+a local shim in the original Task 4 pass — which masked the real defect).
+Owner decision 2026-10-01: fix `db.py` (add `@asynccontextmanager`) and use
+the real API in the roundtrip test; this test is that regression guard.
 
-2. `cookbook.db.session_scope` is an `async def` ... `yield` coroutine that was
-   never decorated with `@asynccontextmanager`, so `async with session_scope()`
-   raises `TypeError: 'async_generator' object does not support the
-   asynchronous context manager protocol` (verified at runtime in the app
-   container). The defect is in the promoted code (byte-identical to
-   `reference/foundation-verified/`, hash `ce843030…`). Per Task 4's scope
-   (tests only — no app-code changes), this test drives the generator with a
-   minimal local shim (`_SessionScope`) that implements the commit-on-clean-exit
-   / rollback-on-exception contract `session_scope`'s own docstring
-   documents. The upstream fix is a one-line `@asynccontextmanager` decorator;
-   flagged for owner approval. Do NOT silently patch `db.py` in this task.
-
-3. AsyncMy connections are bound to the event loop that created them, and the
-   engine pool is process-global (`lru_cache`), so each test disposes the
-   engine (drains the pool) before returning — otherwise the next test's
-   fresh `asyncio.run()` loop reuses a pooled connection created by the
-   dead loop and fails with "Future attached to a different loop"
-   (observed in-container 2026-10-01; the plan's draft test has this
-   latent issue too — it passes today only by test order and by the first
-   test's connection returning the pool clean enough to be re-pinged).
+AsyncMy connections are bound to the event loop that created them, and the
+engine pool is process-global (`lru_cache`), so each test disposes the engine
+in a `finally` — BEFORE the next test's fresh `asyncio.run()` loop can
+re-checkout a pooled connection created by the dead loop
+("Future attached to a different loop"). The `finally` also means disposal
+runs even when an assertion in the test body fails.
 """
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import uuid
 
 from sqlalchemy import text
@@ -54,54 +42,24 @@ EXPECTED_COLUMNS = {
 def _dispose_engine() -> None:
     """Drain the process-global engine pool between tests.
 
-    AsyncMy connections belong to the event loop that created them, and
-    each test runs under its own ``asyncio.run()`` loop. Without this, the
-    next test would check out a pooled connection from the previous (now
-    closed) loop and fail with ``RuntimeError: ... attached to a different
-    loop``.
+    Called from a `finally`, so it runs even when a test assertion fails —
+    see the module docstring for why skipping it breaks the next test.
     """
     asyncio.run(get_engine().dispose())
-
-
-class _SessionScope:
-    """Drives `session_scope()`'s async-generator with the
-    `@asynccontextmanager` protocol it is missing.
-
-    Semantics are exactly as documented in `cookbook.db.session_scope`:
-    yield the session; commit on clean exit; rollback on exception.
-    Kept here (not in `db.py`) so Task 4's diff stays scoped to the test file;
-    the one-line upstream fix is flagged separately for owner approval.
-    """
-
-    def __init__(self) -> None:
-        self._gen = session_scope()
-        self._session = None
-
-    async def __aenter__(self):
-        self._session = await self._gen.__anext__()
-        return self._session
-
-    async def __aexit__(self, exc_type, exc, tb):
-        if exc_type is None:
-            # resume past the yield -> commit() on the happy path
-            with contextlib.suppress(StopAsyncIteration):
-                await self._gen.__anext__()
-        else:
-            # push the exception into the generator at its yield ->
-            # the in-generator except-block rolls back and re-raises
-            with contextlib.suppress(Exception, StopAsyncIteration):
-                await self._gen.athrow(exc)
-        return False
 
 
 def test_users_table_shape() -> None:
     """The v0 migration produced the exact v0 `users` shape (spec §3.5 —
     the sessions/lockout columns belong to the auth plan, not v0):
-    8 columns, expected types + nullability, `id` PK, UNIQUE `username`.
+    8 columns, expected types + nullability, `id` is the primary key,
+    `username` carries its own separate UNIQUE constraint.
 
     Uses `get_engine()` directly (read-only); no rows are written here.
     The `users` table started at 0 rows (verified in dev) and this test
     leaves it exactly as it found it.
+
+    `id` type is pinned to exactly `varchar(36)` — owner decision DL-5
+    (f2a5750), no CHAR/VARCHAR equivalence.
     """
 
     async def run() -> None:
@@ -114,9 +72,7 @@ def test_users_table_shape() -> None:
             ))
             cols = {row[0]: {"type": row[1], "nullable": row[2]} for row in res}
             assert set(cols) == EXPECTED_COLUMNS, f"columns: {set(cols)}"
-            # char(36)/varchar(36) are equivalent on MySQL-family dialects;
-            # the spec says CHAR(36), the migration emits VARCHAR(36)
-            assert cols["id"]["type"] in ("char(36)", "varchar(36)")
+            assert cols["id"]["type"] == "varchar(36)", f"id type: {cols['id']['type']!r}"
             assert cols["id"]["nullable"] == "NO"
             assert cols["username"]["type"] == "varchar(60)"
             assert cols["username"]["nullable"] == "NO"
@@ -131,37 +87,60 @@ def test_users_table_shape() -> None:
             assert cols["created_at"]["nullable"] == "NO"
             assert cols["updated_at"]["type"] == "datetime"
             assert cols["updated_at"]["nullable"] == "NO"
+
+            # Index-level assertions: (column, index_name) for every
+            # non-unique (PK/UNIQUE) index on the table.
             res2 = await conn.execute(text(
-                "SELECT column_name FROM information_schema.statistics "
+                "SELECT column_name, index_name FROM information_schema.statistics "
                 "WHERE table_schema = DATABASE() AND table_name = 'users' "
                 "AND non_unique = 0"
             ))
-            unique_cols = {row[0] for row in res2}
-            assert "id" in unique_cols, f"PK missing: {unique_cols}"
-            assert "username" in unique_cols, f"UNIQUE(username) missing: {unique_cols}"
+            col_to_index = {row[0]: row[1] for row in res2}
 
-    asyncio.run(run())
-    _dispose_engine()
+            # `id` is the primary key — under MariaDB `information_schema`,
+            # the PK index on InnoDB is named `PRIMARY`.
+            assert col_to_index.get("id") == "PRIMARY", (
+                f"id is not the primary key: {col_to_index}"
+            )
+            # `username` has its own UNIQUE constraint: a non-unique index
+            # that is NOT the primary key (its own named unique index).
+            username_index = col_to_index.get("username")
+            assert username_index is not None, (
+                f"no non-unique index on username: {col_to_index}"
+            )
+            assert username_index != "PRIMARY", (
+                f"username's unique index is unexpectedly the PK: {col_to_index}"
+            )
+
+    try:
+        asyncio.run(run())
+    finally:
+        _dispose_engine()
 
 
 def test_user_roundtrip() -> None:
-    """INSERT + read back through `session_scope`'s commit-on-exit contract:
-    `role` defaults to `editor`, `is_active` to `True`, and the server-side
-    `now()` defaults fill `created_at`/`updated_at`.
+    """INSERT + read back through the real `session_scope()` API — the exact
+    `async with session_scope()` usage the app code relies on (regression
+    guard against the missing `@asynccontextmanager` bug): on clean exit the
+    scope commits; on exception it rolls back.
 
-    Hygiene: a UUID-derived `username` and a `finally`-block cleanup that
-    deletes the test row by its exact `(id, username)` pair and verifies it
-    is gone — so the dev `users` table (0 rows at test time) is left exactly
-    as it was, even if an assertion in the body fails. Existing user
-    records are never touched by this test.
+    Expected defaults survive the roundtrip: `role` = `editor`,
+    `is_active` = True, server-side `now()` fills `created_at`/`updated_at`,
+    `display_name` stays NULL.
+
+    Hygiene: a UUID-derived `username`; `finally`-block cleanup deletes the
+    test row by its exact `(id, username)` pair and verifies it is gone —
+    so the dev `users` table (0 rows at test time) is left exactly as it was
+    EVEN IF AN ASSERTION IN THE BODY FAILS. Existing user records are never
+    touched. The engine is disposed in `finally` too (see module docstring).
     """
 
     async def run() -> None:
         uid = str(uuid.uuid4())
         username = f"t4_roundtrip_{uid[:12]}"
-        inserted: bool = False
+        inserted = False
         try:
-            async with _SessionScope() as session:
+            async with session_scope() as session:
                 session.add(User(
                     id=uid,
                     username=username,
@@ -169,7 +148,7 @@ def test_user_roundtrip() -> None:
                 ))
             inserted = True  # committed inside the scope's clean exit
 
-            async with _SessionScope() as session:
+            async with session_scope() as session:
                 u = await session.get(User, uid)
                 assert u is not None, "row not found after commit"
                 assert u.username == username
@@ -198,5 +177,7 @@ def test_user_roundtrip() -> None:
                 )).scalar()
                 assert remaining == 0, f"test row {uid} still present after cleanup"
 
-    asyncio.run(run())
-    _dispose_engine()
+    try:
+        asyncio.run(run())
+    finally:
+        _dispose_engine()
