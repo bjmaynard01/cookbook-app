@@ -21,6 +21,7 @@ Run: ``.venv/bin/pytest tests/test_app.py -v``  (from the repo root, no DB).
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 
 import pytest
 from fastapi.testclient import TestClient
@@ -85,7 +86,7 @@ def _install_fake_engine(monkeypatch: pytest.MonkeyPatch, fail: bool) -> None:
 @pytest.fixture
 def client(
     monkeypatch: pytest.MonkeyPatch, tmp_path
-) -> TestClient:
+) -> Iterator[TestClient]:
     # --- hermetic settings (same isolation as tests/test_config.py) ---
     import os
 
@@ -113,7 +114,19 @@ def client(
     db_mod.get_session.cache_clear()
 
     app = app_mod.create_app()  # validates SECRET_KEY (D20); does not touch DB
-    return TestClient(app)
+    yield TestClient(app)
+
+    # --- teardown: leave no poisoned settings cache behind ----------------
+    # ``create_app()`` called ``get_settings()`` against THIS fixture's env
+    # (DB_HOST=127.0.0.1), populating the @lru_cache. ``monkeypatch`` restores
+    # the real env vars on teardown but NOT the cache — so without this the
+    # cached Settings(db_host=127.0.0.1) survives and a later module
+    # (``test_models.py``) that builds an engine via ``get_engine()→
+    # get_settings()`` inherits it and dials 127.0.0.1 instead of the compose
+    # database host. Clearing here mirrors test_config.py's autouse fixture.
+    app_mod.get_settings.cache_clear()
+    db_mod.get_engine.cache_clear()
+    db_mod.get_session.cache_clear()
 
 
 # ---------------------------------------------------------------------------
