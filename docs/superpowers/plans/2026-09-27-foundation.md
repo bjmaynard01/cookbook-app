@@ -579,7 +579,7 @@ def test_user_roundtrip() -> None:
     asyncio.run(run())
 ```
 
-Notes: The promoted `session_scope()` implementation is currently an undecorated async generator, so the planned `async with` use requires `@asynccontextmanager` in `src/cookbook/db.py` before this test can validate the real API. `await session.get(User, uid)` is the async ORM API. Column types are asserted as MariaDB reports them (`varchar(36)`, `varchar(60)`); DL-5 accepts the v0 migration's UUID column type.
+Notes: The promoted `session_scope()` implementation was an undecorated async generator; Task 4 added `@asynccontextmanager` in `src/cookbook/db.py`, so this test now validates the real `async with` API. `await session.get(User, uid)` is the async ORM API. Column types are asserted as MariaDB reports them (`varchar(36)`, `varchar(60)`); DL-5 accepts the v0 migration's UUID column type.
 
 - [ ] **Step 2: Bring up the dev stack and run the tests inside the app container**
 
