@@ -24,12 +24,17 @@ Build succeeded end-to-end. Key evidence from the build output:
   cookbook:cookbook /app` DONE 0.3s.
 - `Image cookbook:dev Built`.
 
-Recorded digests (from build output + `docker inspect`):
-- manifest list (repo tag `cookbook:dev`):
+Recorded digests (from build output and local Docker 29.7.2 inspection):
+- OCI image index for the repo tag `cookbook:dev`:
   `sha256:6893ea78210b0e6fd669ba4b2f4a7ae9d9c18880acf1e9557340e88216f134ed`
-- per-arch manifest: `sha256:55d343ec4ac57d8ab0df670f12c369e1c45f0a30c165b8171d1120dcdcaf650c`
-- image config: `sha256:b76d9b81d293181af1a8519cd35df4a3fe55382fb2370bb2e103a9fc33c74d64`
-- local image ID: `6893ea78210b`; created 2026-10-03 15:43 -0400.
+- per-architecture manifest reported by the build:
+  `sha256:55d343ec4ac57d8ab0df670f12c369e1c45f0a30c165b8171d1120dcdcaf650c`
+- image config digest reported by the build:
+  `sha256:b76d9b81d293181af1a8519cd35df4a3fe55382fb2370bb2e103a9fc33c74d64`
+- `docker image inspect cookbook:dev --format '{{.Id}} {{json .Descriptor}}'`
+  reports the OCI image index digest `6893ea78210b…` as both the local ID and
+  descriptor digest on this Docker installation. The image was created
+  2026-10-03 15:43 -0400.
 
 The previously retained image (`sha256:1a273aa35a57…`, 2026-09-28) was
 superseded — as the plan anticipates, the build digest differs unless inputs
@@ -57,7 +62,7 @@ docker compose up -d
 Confirmation the running `app` is the fresh build:
 ```
 docker inspect app --format '{{.Config.Image}}'   # cookbook:dev
-docker inspect <app.ImageId> --format '{{.Id}}'   # sha256:6893ea78210b…
+docker inspect app --format '{{.Image}}'           # sha256:6893ea78210b…
 ```
 `app` reached `healthy` (its healthcheck is a `/readyz` 200 probe).
 
@@ -152,10 +157,12 @@ HTTP 503
 The fresh image does not ship the tests, and `docker exec` runs as the
 non-root `cookbook` user (no passwordless sudo), so tests were synced to
 `/app/tests/` (writable by that user) — this does not modify the repo or the
-image:
+image. The initially recorded `docker cp tests/test_{config,app,models}.py
+app:/app/tests/` command was invalid because `docker cp` accepts one source;
+the following copy and suite run were verified during review:
 ```
-docker exec app sh -c 'mkdir -p /app/tests'
-docker cp tests/test_{config,app,models}.py app:/app/tests/
+docker cp tests/. app:/app/tests/
+docker exec app python -m pytest /app/tests/test_config.py /app/tests/test_app.py /app/tests/test_models.py -q
 ```
 Confirmed the fixed `test_app.py` (Task 4 teardown: `Iterator[TestClient]`,
 `yield TestClient(app)`, 3 `cache_clear()` calls pre+post) is the file under
@@ -209,8 +216,9 @@ Limitations:
   error: PermissionError`, loud log, container stays up, recover to 200)
   matches the plan's stated assertion.
 - `/mnt/container/db` held pre-existing dev data; re-running `alembic upgrade
-  head` against it was a no-op apply (schema already at head), so the
-  entrypoint's apply path was exercised/logged but not a cold-migration run.
-  This is expected for a preserved dev DB and does not weaken the gate.
+  head` against it was a no-op apply (schema already at head). This run
+  verifies entrypoint execution and the final schema state, but does not
+  independently prove migration from an empty database. The earlier cold
+  migration is recorded in `docs/superpowers/SESSION-HANDOFF-2026-09-27.md`.
 - Tests were synced to the *container's* `/app/tests/` for execution; the repo
   `tests/` tree and the built image were not modified by this run.
