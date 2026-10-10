@@ -20,6 +20,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
@@ -79,6 +80,10 @@ class Recipe(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("source_system", "source_id", name="uq_recipes_source"),
+    )
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Recipe {self.slug!r}>"

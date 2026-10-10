@@ -157,9 +157,12 @@ def test_recipe_defaults_roundtrip() -> None:
 def test_recipe_source_idempotency_key() -> None:
     """The importer idempotency key `UNIQUE (source_system, source_id)` (D5/D8):
     a second recipe with the same `(wordpress, 1234)` is rejected, while two
-    `web` recipes with `source_id IS NULL` are both allowed (MariaDB multiple-NULL
-    semantics). Cleans up on both happy and rejected paths."""
-    rid1, rid2, rid3 = (str(uuid.uuid4()) for _ in range(3))
+    DISTINCT `web` recipes with `source_id IS NULL` are both allowed (MariaDB
+    multiple-NULL semantics). All test rows are cleaned up and verified gone,
+    even when an assertion in the body fails (same pattern as
+    `test_recipe_defaults_roundtrip`)."""
+    rid1, rid2, rid3, rid4 = (str(uuid.uuid4()) for _ in range(4))
+    committed: list[str] = []  # ids actually reached the DB; cleanup gate
 
     async def try_add(r: Recipe) -> bool:
         """Return True if committed; False if rejected by the DB (IntegrityError)."""
@@ -171,30 +174,68 @@ def test_recipe_source_idempotency_key() -> None:
             return False
         return True
 
-    async def run() -> None:
-        async with session_scope() as s:
-            s.add(Recipe(id=rid1, slug=f"src-{rid1[:8]}", title="S1",
-                         source_system="wordpress", source_id="1234"))
-            s.add(Recipe(id=rid2, slug=f"src2-{rid2[:8]}", title="S2",
-                         source_system="wordpress", source_id="5678"))
-            s.add(Recipe(id=rid3, slug=f"web-{rid3[:8]}", title="Web A",
-                         source_system="web", source_id=None))
+    async def cleanup() -> None:
+        """Delete this test's rows and verify they are gone.
 
-        # duplicate (source_system, source_id) must be rejected by the DB
-        dup_added = await try_add(Recipe(
-            id=str(uuid.uuid4()), slug=f"dup-{uuid.uuid4().hex[:6]}",
-            title="Duplicate source", source_system="wordpress", source_id="1234"))
-        assert dup_added is False, "duplicate (source_system, source_id) was ACCEPTED"
-
-        # cleanup + verify
-        async with session_scope() as s:
-            for rid in (rid1, rid2, rid3):
-                await s.execute(text("DELETE FROM recipes WHERE id = :id"), {"id": rid})
+        Explicit named params (not IN-clause tuple expansion — asyncmy rejects
+        the expanded `IN (%s)` binding with "Illegal parameter data types"
+        under SQLAlchemy 2.0 insertmanyvalues); see the `IN (:a,:b,:c)` style
+        above in this file."""
+        if committed:
+            ph = ",".join(f":r{i}" for i in range(len(committed)))
+            params = {f"r{i}": rid for i, rid in enumerate(committed)}
+            async with get_engine().begin() as conn:
+                rc = (await conn.execute(
+                    text(f"DELETE FROM recipes WHERE id IN ({ph})"),
+                    params)).rowcount
+                assert rc == len(committed), (
+                    f"cleanup: expected {len(committed)} rows, deleted {rc}")
         async with get_engine().connect() as conn:
             remaining = (await conn.execute(
-                text("SELECT COUNT(*) FROM recipes WHERE id IN (:a,:b,:c)"),
-                {"a": rid1, "b": rid2, "c": rid3})).scalar()
+                text("SELECT COUNT(*) FROM recipes WHERE id IN (:a,:b,:c,:d)"),
+                {"a": rid1, "b": rid2, "c": rid3, "d": rid4})).scalar()
             assert remaining == 0, "probe rows still present after cleanup"
+
+    async def run() -> None:
+        nonlocal committed
+        try:
+            async with session_scope() as s:
+                s.add(Recipe(id=rid1, slug=f"src-{rid1[:8]}", title="S1",
+                             source_system="wordpress", source_id="1234"))
+                s.add(Recipe(id=rid2, slug=f"src2-{rid2[:8]}", title="S2",
+                             source_system="wordpress", source_id="5678"))
+                # two DISTINCT web recipes, both with source_id NULL — both
+                # must be accepted by the same (source_system, source_id) key
+                # (MariaDB unique indexes treat NULLs as distinct)
+                s.add(Recipe(id=rid3, slug=f"web-{rid3[:8]}", title="Web A",
+                             source_system="web", source_id=None))
+                s.add(Recipe(id=rid4, slug=f"web2-{rid4[:8]}", title="Web B",
+                             source_system="web", source_id=None))
+            committed += [rid1, rid2, rid3, rid4]  # committed on clean scope exit
+
+            # both NULL-source web rows must be present and distinct
+            async with session_scope() as s:
+                present = (await s.execute(
+                    sqlalchemy.select(Recipe.id, Recipe.source_system,
+                                      Recipe.source_id).where(
+                        (Recipe.id == rid3) | (Recipe.id == rid4)))).all()
+            got = {row[0] for row in present}
+            assert got == {rid3, rid4}, f"web rows: {got!r}"
+            assert all(sys == "web" and sid is None
+                       for _id, sys, sid in present), (
+                f"web rows not (web, NULL source_id): {present!r}")
+
+            # duplicate (source_system, source_id) must be rejected by the DB;
+            # if it is (wrongly) accepted, track it so cleanup still removes it
+            dup_id = str(uuid.uuid4())
+            dup_added = await try_add(Recipe(
+                id=dup_id, slug=f"dup-{dup_id[:8]}",
+                title="Duplicate source", source_system="wordpress", source_id="1234"))
+            if dup_added:
+                committed.append(dup_id)
+            assert dup_added is False, "duplicate (source_system, source_id) was ACCEPTED"
+        finally:
+            await cleanup()
 
     try:
         asyncio.run(run())
