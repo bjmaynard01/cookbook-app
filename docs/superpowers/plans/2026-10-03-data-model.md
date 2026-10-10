@@ -649,7 +649,7 @@ No timestamps (spec §3.4 lists none; DL-4 adds only order).
 
 No `position` — shared-contract ordering rule 6 (free-form per D13; an owner-ordered-tags migration is a future change).
 
-`recipe_categories`: composite PK `(recipe_id, category_id)` — many-to-many, no per-recipe uniqueness beyond it (D12). FKs: `recipe_id → recipes.id ON DELETE CASCADE` (membership dies with the recipe — required for Task 2's deep-cascade to keep working); `category_id → categories.id ON DELETE RESTRICT` (DB hard guard for DL-4 "deleting an in-use category must not lose the recipes' other membership" — the *presentation* of that guard is app-level, later plan).
+`recipe_categories`: composite PK `(recipe_id, category_id)` — many-to-many, no per-recipe uniqueness beyond it (D12). FKs: `recipe_id → recipes.id ON DELETE CASCADE` (membership dies with the recipe — required for Task 2's deep-cascade to keep working); `category_id → categories.id ON DELETE RESTRICT` (**P1 — proposal, awaiting owner approval:** the recommended DB-side guard for DL-4 "deleting an in-use category must not lose the recipes' other membership" — the least-surprising option, so a delete of an in-use category is rejected until its recipes are reassigned. If the owner declines the hard DB guard, an app-level guard + presentation in the read/admin plan still satisfies DL-4. The rule is the decision, not the mechanism — see Open decisions, P1.)
 
 `recipe_tags`: identical shape: composite PK `(recipe_id, tag_id)`, `recipe_id → recipes.id ON DELETE CASCADE`, `tag_id → tags.id ON DELETE RESTRICT`.
 
@@ -694,8 +694,8 @@ recipe_tags = sa.Table(
   - `test_tags_columns`: exactly `{id, slug, name}` (proves **no** `position` column exists — rule 6); types `varchar(36)`, `varchar(200)`, `varchar(100)`; all NOT NULL.
   - `test_tags_indexes`: `PRIMARY == [id]`, `uq_tags_slug == [slug]`.
   - `test_join_primary_keys`: `recipe_categories.PRIMARY == [recipe_id, category_id]`; `recipe_tags.PRIMARY == [recipe_id, tag_id]`.
-  - `test_join_fks`: `recipe_id → recipes.id CASCADE`; `category_id → categories.id RESTRICT`; `tag_id → tags.id RESTRICT` (each via `key_column_usage` ⨝ `referential_constraints`).
-  - `test_in_use_category_protected`: create probe recipe; INSERT `recipe_categories` row (seed `breakfast` + probe); `DELETE FROM categories WHERE id = '412b94fd-…'` → `IntegrityError` (RESTRICT); cleanup restores count.
+  - `test_join_fks`: `recipe_id → recipes.id CASCADE`; `category_id → categories.id RESTRICT` (P1 — only if the owner ratifies the guard); `tag_id → tags.id RESTRICT` (each via `key_column_usage` ⨝ `referential_constraints`).
+  - `test_in_use_category_protected`: create probe recipe; INSERT `recipe_categories` row (seed `breakfast` + probe); `DELETE FROM categories WHERE id = '412b94fd-…'` → `IntegrityError` (RESTRICT); cleanup restores count. **This test exists only if the owner ratifies P1** (block in-use category deletion); if the owner rejects P1, it is dropped and the guard becomes app-level (see Open decisions, P1).
   - `test_membership_cascades_from_recipe`: probe recipe + membership in `breakfast` and `fermentation`; delete the recipe → both join rows gone (baseline `COUNT(*)` restored).
   - `test_seed_rows_locked`: after `alembic upgrade head`, `SELECT slug,name,position FROM categories ORDER BY position` returns **exactly** the 8-row table above (order, slugs, names); each locked UUID present; `COUNT(*) == 8`; no row with `slug='others'` (import's job).
   - `test_seed_positions_dense`: `MIN(position)=1`, `MAX(position)=8`, no gaps, all unique.
@@ -1001,4 +1001,8 @@ Each merge requires owner approval (branch-per-task; merge to `main` only on exp
 
 **Deliberately still out of scope** (owning plans): `sessions` / `login_attempts` (auth plan); FULLTEXT indexes and tokenizer choice (search plan, O5 — this plan left `title`, `description`, `raw_text` plain-index-able and added no FULLTEXT); the `Others` category row (import plan, DL-4); the 301 middleware and the read surfaces that *consume* the locked orderings (read plan); the importer CLI and §5.3 gate script (import plan).
 
-**Open decisions carried forward:** O5 — FULLTEXT/index strategy, benchmarked on the migrated corpus in the search plan; nothing in this plan blocks on it. If the owner wants owner-ordered tags (ordering rule 6), that is a new migration under the same task/branch discipline.
+**Open decisions carried forward:**
+
+- **P1 — block deletion of an in-use category (proposal, awaiting owner approval).** *Recommendation: yes.* Deleting a category that still has recipe memberships should fail (or be blocked until its recipes are reassigned), so no recipe silently loses the membership it held — DL-4's "must not lose the recipes' other membership." The plan's default is the least-surprising option: a DB-side `ON DELETE RESTRICT` on `recipe_categories.category_id` (and, for symmetry, `recipe_tags.tag_id`) — Task 3 locks it, `test_in_use_category_protected` pins it, and `test_join_fks` asserts the `RESTRICT` rule. If the owner **declines** the hard DB guard, the guard moves to app-level save-time validation + UI (read/admin plan) and the Task 3 RESTRICT FK + its two test assertions are dropped; the recommendation itself is unchanged (in-use categories are still not deletable). Owner decision needed before Task 3's migration is cut.
+- **O5 — FULLTEXT/index strategy**, benchmarked on the migrated corpus in the search plan; nothing in this plan blocks on it.
+- **Owner-ordered tags (ordering rule 6)** — if the owner later wants an owner-manageable tag order, that is a new migration under the same task/branch discipline.
