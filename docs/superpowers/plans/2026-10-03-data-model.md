@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Define the full cookbook schema — `recipes`, ordered body `sections` + `items`, `categories`, `tags` + join tables, migration audit tables, and `recipe_url_aliases` — as SQLAlchemy models, one forward Alembic migration, and a regression test suite green against an **isolated** MariaDB database, without advancing the running dev database.
+**Goal:** Define the full cookbook schema — `recipes`, ordered body `sections` + `items`, `categories`, `tags` + join tables, migration audit tables, and `recipe_url_aliases` — as SQLAlchemy models, a sequence of forward Alembic migrations, and a regression test suite green against an **isolated** MariaDB database, without advancing the running dev database.
 
-**Architecture:** SQLAlchemy 2.0 (async `asyncmy`) declarative models in `src/cookbook/models.py`; a single Alembic revision on top of v0 (`6d22befb6ec9_users_table`); shape tests read `information_schema` (columns, types, nullability, exactly-which-columns of each PK/UNIQUE index) plus INSERT/cascade probes through the real engine against a **throwaway `cookbook_test` schema** in a dedicated `testdb` container. The dev stack on `cookbook` is untouched while this schema is unmerged.
+**Architecture:** SQLAlchemy 2.0 (async `asyncmy`) declarative models in `src/cookbook/models.py`; one reviewed Alembic revision per implementation slice on top of v0 (`6d22befb6ec9_users_table`); shape tests read `information_schema` (columns, types, nullability, exactly-which-columns of each PK/UNIQUE index) plus INSERT/cascade probes through the real engine against a **throwaway `cookbook` schema** in a dedicated `cookbook-test-db` container. The dev stack on `cookbook` is untouched while each schema slice is unmerged.
 
 **Tech Stack:** Python 3.13.15 venv (uv), SQLAlchemy 2.0 async + asyncmy, Alembic, MariaDB 11 (`mariadb:11`), pytest (no pytest-asyncio — tests use `asyncio.run` directly, same as `tests/test_models.py`), Docker Compose.
 
@@ -24,9 +24,10 @@ Verbatim from the spec + decision log — every task's requirements implicitly i
 - **DL-3 (binding, supersedes §3.2/§3.3 for the store shape):** "Body model = ordered `section[]` = list of `{heading?, kind: 'ingredients'|'steps'|'note', lines[]}`. `raw_text`-first (D4) applies to every line in every section."
 - **DL-4 (binding):** "Categories are data, never hardcoded" — the 8 WP menu categories + "Others" are seed data in owner-manageable order; deleting an in-use category must not lose the recipes' other membership.
 - **DL-5 (binding):** UUIDv4 identifiers (all `id` PKs + FKs referencing them) are `VARCHAR(36)` — not `CHAR(36)`. Fixed-length hashes/tokens keep their spec-defined `CHAR` types (auth plan only).
+- **DL-6 (owner-approved 2026-10-10):** An alias always has exactly one existing target. Recipe and category alias FKs use `ON DELETE RESTRICT`; reassign an alias to another valid target before deleting its old target. In-use categories cannot be deleted until their recipe memberships are deliberately reassigned or removed; `recipe_categories.category_id` uses `ON DELETE RESTRICT`. Admin/API flows must explain these blocks. This approval does not decide tag deletion policy.
 - **DL-1 (binding for seed/import, not for schema):** all 388 published recipes migrate; the 14 unmenued get the seeded "Others" category; draft 1865 excluded.
 
-**Owner standing orders (binding):** storage on host bind mounts under `/mnt/container/<container>`; one code path (only config differs between dev/prod); dev DB data disposable (D22) but **do not advance the running dev stack while this branch is unmerged** — test against an isolated `cookbook_test` database in a `testdb` container; branch-per-task, merge to `main` only on explicit owner approval.
+**Owner standing orders (binding):** persistent storage on host bind mounts under `/mnt/container/<container>`; no named or anonymous Docker volumes; one code path (only config differs between dev/prod); dev DB data disposable (D22) but **do not advance the running dev stack while each schema slice is unmerged** — test against an isolated `cookbook` database in a disposable `cookbook-test-db` container with explicit tmpfs for its data directory; branch-per-task, merge to `main` only on explicit owner approval.
 
 ## Schema overview (what this plan locks)
 
@@ -51,16 +52,16 @@ Verbatim from the spec + decision log — every task's requirements implicitly i
 
 ### Isolated test database (binding)
 
-**Do not run any migration or test against the running dev `db` container, the `cookbook` dev schema under `/mnt/container/db`, or the dev `app` stack while this branch is unmerged.** Every MariaDB step in this plan runs against a throwaway single-instance container named `cookbook-test-db` on pinned port `127.0.0.1:33061`:
+**Do not run any migration or test against the running dev `db` container, the `cookbook` dev schema under `/mnt/container/db`, or the dev `app` stack while a schema slice is unmerged.** Every MariaDB step in this plan runs against a throwaway single-instance container named `cookbook-test-db` on pinned port `127.0.0.1:33061`:
 
 ```bash
 # 1) Pre-flight: record the dev stack's state so you can prove it's untouched afterwards
 docker compose ps --format '{{.Name}} {{.Status}}' | tee /tmp/devstack-before.txt
 
-# 2) Fresh throwaway MariaDB (disposable by design per D22 — no host mount: it
-#    has no persistent storage by intent, so no /mnt/container entry is required)
-docker rm -f cookbook-test-db 2>/dev/null || true
-docker run -d --name cookbook-test-db \
+# 2) Start only if the name is free; do not delete another reviewer's database.
+#    MariaDB's image declares /var/lib/mysql as a VOLUME. Explicit tmpfs avoids
+#    an anonymous Docker volume and keeps this test database disposable.
+docker run --rm -d --name cookbook-test-db --tmpfs /var/lib/mysql:size=1g \
   --health-cmd="healthcheck.sh --connect --innodb_initialized" \
   --health-interval=3s --health-timeout=3s --health-retries=24 \
   -e MARIADB_ROOT_PASSWORD=devrootpassword \
@@ -82,8 +83,9 @@ local `.env` in pydantic-settings precedence — env vars beat dotenv — so the
 secret-guarded local `.env` can never leak values into the test connection):
 
 ```bash
-export CT="SECRET_KEY=devsecretkey DB_HOST=127.0.0.1 DB_PORT=33061 DB_NAME=cookbook DB_USER=cookbook DB_PASSWORD=devpassword"
-# then, e.g.:
+# Use fresh, non-production test credentials in place of the example values.
+# The commands below also override a stale DEBUG value from a local .env.
+export CT="DEBUG=false SECRET_KEY=devsecretkey DB_HOST=127.0.0.1 DB_PORT=33061 DB_NAME=cookbook DB_USER=cookbook DB_PASSWORD=devpassword"
 env $CT .venv/bin/alembic upgrade head
 env $CT .venv/bin/pytest tests/test_recipes.py -v
 ```
@@ -91,7 +93,7 @@ env $CT .venv/bin/pytest tests/test_recipes.py -v
 Tear-down at the end of each task (before commit), plus the unchanged-dev-stack proof:
 
 ```bash
-docker rm -f cookbook-test-db
+docker stop cookbook-test-db
 docker compose ps --format '{{.Name}} {{.Status}}' | tee /tmp/devstack-after.txt
 diff /tmp/devstack-before.txt /tmp/devstack-after.txt && echo "dev stack untouched"
 ```
@@ -336,7 +338,7 @@ def test_recipe_source_idempotency_key() -> None:
 
 ```bash
 # (shared contract: pre-flight snapshot, then)
-docker run -d --name cookbook-test-db \
+docker run --rm -d --name cookbook-test-db --tmpfs /var/lib/mysql:size=1g \
   --health-cmd="healthcheck.sh --connect --innodb_initialized" \
   --health-interval=3s --health-timeout=3s --health-retries=24 \
   -e MARIADB_ROOT_PASSWORD=devrootpassword -e MARIADB_DATABASE=cookbook \
@@ -344,11 +346,11 @@ docker run -d --name cookbook-test-db \
   -p 127.0.0.1:33061:3306 mariadb:11
 for i in $(seq 1 30); do docker inspect cookbook-test-db --format '{{.State.Health.Status}}' | grep -q healthy && break; sleep 2; done
 
-export CT="SECRET_KEY=devsecretkey DB_HOST=127.0.0.1 DB_PORT=33061 DB_NAME=cookbook DB_USER=cookbook DB_PASSWORD=devpassword"
+export CT="DEBUG=false SECRET_KEY=devsecretkey DB_HOST=127.0.0.1 DB_PORT=33061 DB_NAME=cookbook DB_USER=cookbook DB_PASSWORD=devpassword"
 env $CT .venv/bin/pytest tests/test_recipes.py -v
 ```
 
-Expected: FAIL — `sqlalchemy.exc.ProgrammingException` / `Table 'cookbook.recipes' doesn't exist` (the migration doesn't exist yet). If it instead dials port `3306`, the env override didn't take — stop and check `env $CT .venv/bin/python -c "from cookbook.config import get_settings; print(get_settings().database_url)"`.
+Expected: FAIL — `sqlalchemy.exc.ProgrammingException` / `Table 'cookbook.recipes' doesn't exist` (the migration doesn't exist yet). If it instead dials port `3306`, the env override didn't take — stop and check the parsed host and port without printing credentials: `env $CT .venv/bin/python -c "from cookbook.config import get_settings; s=get_settings(); print(s.db_host, s.db_port)"`.
 
 - [ ] **Step 3: Implement — model + migration**
 
@@ -405,11 +407,15 @@ class Recipe(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
+    __table_args__ = (
+        UniqueConstraint("source_system", "source_id", name="uq_recipes_source"),
+    )
+
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Recipe {self.slug!r}>"
 ```
 
-Top-of-file: the imports block above (add `DECIMAL, Date, Integer, Text, ForeignKey, text`; extend `from datetime import datetime` with `date`; add `from decimal import Decimal`).
+Top-of-file: the imports block above (add `DECIMAL, Date, Integer, Text, ForeignKey, UniqueConstraint, text`; extend `from datetime import datetime` with `date`; add `from decimal import Decimal`). This constraint is already present in the merged Task 6.1 model; the sample above documents that shipped shape.
 
 New migration `alembic/versions/<rev1>_v1_recipes_table.py` (generate: `env $CT .venv/bin/alembic revision -m "v1_recipes_table"` after the model is in place, then align the emitted DDL with the table above — `down_revision = '6d22befb6ec9'`):
 
@@ -485,7 +491,7 @@ Expected: `PRIMARY KEY (id)`, `UNIQUE KEY uq_recipes_slug (slug)`, `UNIQUE KEY u
 - [ ] **Step 5: Tear down the isolated DB, prove the dev stack is untouched, commit**
 
 ```bash
-docker rm -f cookbook-test-db
+docker stop cookbook-test-db
 docker compose ps --format '{{.Name}} {{.Status}}' > /tmp/devstack-after.txt
 diff /tmp/devstack-before.txt /tmp/devstack-after.txt && echo "dev stack untouched"
 git ls-files | grep -c egg-info   # must be 0
@@ -649,9 +655,9 @@ No timestamps (spec §3.4 lists none; DL-4 adds only order).
 
 No `position` — shared-contract ordering rule 6 (free-form per D13; an owner-ordered-tags migration is a future change).
 
-`recipe_categories`: composite PK `(recipe_id, category_id)` — many-to-many, no per-recipe uniqueness beyond it (D12). FKs: `recipe_id → recipes.id ON DELETE CASCADE` (membership dies with the recipe — required for Task 2's deep-cascade to keep working); `category_id → categories.id ON DELETE RESTRICT` (**P1 — proposal, awaiting owner approval:** the recommended DB-side guard for DL-4 "deleting an in-use category must not lose the recipes' other membership" — the least-surprising option, so a delete of an in-use category is rejected until its recipes are reassigned. If the owner declines the hard DB guard, an app-level guard + presentation in the read/admin plan still satisfies DL-4. The rule is the decision, not the mechanism — see Open decisions, P1.)
+`recipe_categories`: composite PK `(recipe_id, category_id)` — many-to-many, no per-recipe uniqueness beyond it (D12). FKs: `recipe_id → recipes.id ON DELETE CASCADE` (membership dies with the recipe); `category_id → categories.id ON DELETE RESTRICT` (**DL-6, owner-approved**). A category with members cannot be deleted until those memberships are deliberately reassigned or removed. The future admin/API flow must report the blocked deletion and offer reassignment; it must not silently drop memberships or leave a recipe without a category.
 
-`recipe_tags`: identical shape: composite PK `(recipe_id, tag_id)`, `recipe_id → recipes.id ON DELETE CASCADE`, `tag_id → tags.id ON DELETE RESTRICT`.
+`recipe_tags`: identical shape: composite PK `(recipe_id, tag_id)`, `recipe_id → recipes.id ON DELETE CASCADE`. The draft `tag_id → tags.id ON DELETE RESTRICT` rule below is **not** part of DL-6; confirm the tag-deletion policy with the owner before cutting Task 3's migration (open decision O6).
 
 **Locked seed set (spec §3.4 EVIDENCE + DL-4; seeded by this migration's `upgrade()`):**
 
@@ -683,7 +689,7 @@ recipe_categories = sa.Table(
 recipe_tags = sa.Table(
     "recipe_tags", Base.metadata,
     sa.Column("recipe_id", sa.String(36), sa.ForeignKey("recipes.id", ondelete="CASCADE"), primary_key=True),
-    sa.Column("tag_id", sa.String(36), sa.ForeignKey("tags.id", ondelete="RESTRICT"), primary_key=True),
+    sa.Column("tag_id", sa.String(36), sa.ForeignKey("tags.id", ondelete="RESTRICT"), primary_key=True),  # O6 draft: confirm before migration
     {"mysql_engine": "InnoDB"},
 )
 ```
@@ -694,13 +700,13 @@ recipe_tags = sa.Table(
   - `test_tags_columns`: exactly `{id, slug, name}` (proves **no** `position` column exists — rule 6); types `varchar(36)`, `varchar(200)`, `varchar(100)`; all NOT NULL.
   - `test_tags_indexes`: `PRIMARY == [id]`, `uq_tags_slug == [slug]`.
   - `test_join_primary_keys`: `recipe_categories.PRIMARY == [recipe_id, category_id]`; `recipe_tags.PRIMARY == [recipe_id, tag_id]`.
-  - `test_join_fks`: `recipe_id → recipes.id CASCADE`; `category_id → categories.id RESTRICT` (P1 — only if the owner ratifies the guard); `tag_id → tags.id RESTRICT` (each via `key_column_usage` ⨝ `referential_constraints`).
-  - `test_in_use_category_protected`: create probe recipe; INSERT `recipe_categories` row (seed `breakfast` + probe); `DELETE FROM categories WHERE id = '412b94fd-…'` → `IntegrityError` (RESTRICT); cleanup restores count. **This test exists only if the owner ratifies P1** (block in-use category deletion); if the owner rejects P1, it is dropped and the guard becomes app-level (see Open decisions, P1).
+  - `test_join_fks`: `recipe_id → recipes.id CASCADE`; `category_id → categories.id RESTRICT` (DL-6); assert the owner-approved tag rule only after O6 is resolved (each via `key_column_usage` ⨝ `referential_constraints`).
+  - `test_in_use_category_protected`: create probe recipe; INSERT `recipe_categories` row (seed `breakfast` + probe); `DELETE FROM categories WHERE id = '412b94fd-…'` → `IntegrityError` (RESTRICT); cleanup restores count. After deliberate membership reassignment or removal, deletion of an owner-created probe category succeeds; do not delete a seeded category in this positive path.
   - `test_membership_cascades_from_recipe`: probe recipe + membership in `breakfast` and `fermentation`; delete the recipe → both join rows gone (baseline `COUNT(*)` restored).
   - `test_seed_rows_locked`: after `alembic upgrade head`, `SELECT slug,name,position FROM categories ORDER BY position` returns **exactly** the 8-row table above (order, slugs, names); each locked UUID present; `COUNT(*) == 8`; no row with `slug='others'` (import's job).
   - `test_seed_positions_dense`: `MIN(position)=1`, `MAX(position)=8`, no gaps, all unique.
 
-- [ ] **Step 4: Migration `<r3>_v3_organization.py`** — generate; align DDL to the four locked tables + FK/index names (`uq_categories_slug`, `uq_categories_position`, `uq_tags_slug`, composite PKs, RESTRICT/CASCADE exactly as above). In `upgrade()`, after the DDL, seed the 8 rows (id, slug, name, position) as a literal INSERT (data migration lives in the revision that creates the table). `downgrade()`: delete the seed rows, drop join tables, then `tags`, then `categories` (FK-safe order). Apply: `env $CT .venv/bin/alembic upgrade head` → v0→v1→v2→v3 clean; `alembic current` shows `<r3>`.
+- [ ] **Step 4: Migration `<r3>_v3_organization.py`** — resolve O6 with the owner, then generate; align DDL to the four table shapes + FK/index names (`uq_categories_slug`, `uq_categories_position`, `uq_tags_slug`, composite PKs, the approved category RESTRICT and the resolved tag rule). In `upgrade()`, after the DDL, seed the 8 rows (id, slug, name, position) as a literal INSERT (data migration lives in the revision that creates the table). `downgrade()`: delete the seed rows, drop join tables, then `tags`, then `categories` (FK-safe order). Apply: `env $CT .venv/bin/alembic upgrade head` → v0→v1→v2→v3 clean; `alembic current` shows `<r3>`.
 
 - [ ] **Step 5: Run tests** — `env $CT .venv/bin/pytest tests/test_organization.py -v` → all pass. Cross-check live DDL with `SHOW CREATE TABLE` for all four tables; verify FK `ON DELETE` verbs match the locked shape.
 
@@ -732,43 +738,49 @@ git commit -m "feat: v3 organization — categories/tags + joins + DL-4 seed (sp
 |---|---|---|
 | `id` | VARCHAR(36) PK | `_uuid` default |
 | `path` | VARCHAR(255) UNIQUE NOT NULL | **full legacy path as observed** — `/?p=1234`, `/?page_id=16` (spec §3.5 + EVIDENCE). Not a slug; never normalized at write time beyond trim — the WXR/observed string is what must match on redirect |
-| `recipe_id` | VARCHAR(36) NULL FK → `recipes.id` ON DELETE SET NULL | NULL for category aliases |
-| `category_id` | VARCHAR(36) NULL FK → `categories.id` ON DELETE SET NULL | NULL for recipe aliases |
-| `has_recipe` | TINYINT(1) GENERATED VIRTUAL | `(recipe_id IS NOT NULL)` — helper for the exactly-one check; not writable |
-| `has_category` | TINYINT(1) GENERATED VIRTUAL | `(category_id IS NOT NULL)` — helper for the exactly-one check; not writable |
+| `recipe_id` | VARCHAR(36) NULL FK → `recipes.id` ON DELETE RESTRICT | NULL for category aliases |
+| `category_id` | VARCHAR(36) NULL FK → `categories.id` ON DELETE RESTRICT | NULL for recipe aliases |
 | `created_at` | DATETIME NOT NULL | server `CURRENT_TIMESTAMP` |
 
-**Exactly-one-of rule (spec §3.5: "CHECK exactly one of the two is non-NULL"):** MariaDB CHECK constraints skip rows with NULLs, so the "both NULL" case can't be written directly. Locked mechanism — **two generated columns**, one per forbidden case, each checked:
+**Exactly-one-of rule (spec §3.5: "CHECK exactly one of the two is non-NULL"):** Compare the two non-NULL boolean results of `IS NOT NULL` directly:
 
-- `has_recipe` = `(recipe_id IS NOT NULL)` → TINYINT(1) GENERATED ALWAYS AS (…) VIRTUAL
-- `has_category` = `(category_id IS NOT NULL)` → TINYINT(1) GENERATED ALWAYS AS (…) VIRTUAL
-- `CONSTRAINT chk_alias_exactly_one CHECK (NOT (has_recipe = 1 AND has_category = 1) AND NOT (has_recipe = 0 AND has_category = 0))`
+`CONSTRAINT chk_alias_exactly_one CHECK ((recipe_id IS NOT NULL) <> (category_id IS NOT NULL))`
 
-This rejects both "both set" and "neither set"; a clean single-target row passes. (The two helper columns are `GENERATED … VIRTUAL` → not stored, invisible to the ORM's INSERT column list — Alembic emits them in the DDL, not in data rows.)
+`IS NOT NULL` always yields true or false, even when the FK itself is NULL, so the expression does not become SQL NULL. It rejects both "both set" and "neither set"; a single-target row passes.
 
-FK delete rules: **SET NULL** on both (spec §3.5 gives no rule; SET NULL is the least-destructive for D6's purpose — an alias is a redirect record, and deleting the target recipe/category is a data event the operator resolves by pointing the alias elsewhere; RESTRICT would make recipe deletion depend on stale redirects). The alias row itself is admin-managed (spec §7.4 role table) — app-level deletion is the read/admin plan's concern, not this one.
+**Verified against isolated MariaDB 11 (`mariadb:11`) on 2026-10-11.** Probes (each in a fresh `--tmpfs /var/lib/mysql` container, no anonymous volume, torn down after use):
+
+- recipe-only alias: accepted
+- category-only alias: accepted
+- both `recipe_id` and `category_id` set: `ERROR 4025 (23000) … CONSTRAINT chk_alias_exactly_one failed`
+- neither set: `ERROR 4025 (23000) … CONSTRAINT chk_alias_exactly_one failed`
+- `DELETE FROM recipes WHERE id='<target>'` while an alias still points to it: `ERROR 1451 (23000) … CONSTRAINT recfk_aliases_recipe` (RESTRICT)
+- after `UPDATE recipe_url_aliases SET recipe_id='<other recipe>' WHERE id='<alias>'`, the same delete succeeds
+- the mirrored probes on the `category_id` / `category` side (using a non-seeded probe category) behave the same way
+
+Re-run the same probes against the exact DDL emitted by `<r4>_v4_url_aliases.py` before merging Task 4, so a future `alembic autogenerate` divergence (e.g. a column rename) is caught at that boundary, not after it.
+
+FK delete rules: **RESTRICT** on both (DL-6). An alias must keep a valid target so old URLs continue resolving (D6/D17). To retire a recipe or category, an admin first reassigns its aliases to another valid target; deleting the old target while an alias still points to it is rejected. The future admin/API flow must explain the block. Routine deletion must not silently delete an alias.
 
 - [ ] **Step 1: Isolated DB pre-flight** — shared contract block.
 
-- [ ] **Step 2: Add the `RecipeUrlAlias` model** (uses Task 1's `_uuid`, `DateTime` patterns; generated columns declared via `Computed`):
+- [ ] **Step 2: Add the `RecipeUrlAlias` model** (uses Task 1's `_uuid`, `DateTime` patterns and a table-level `CheckConstraint`):
 
 ```python
 class RecipeUrlAlias(Base):
     __tablename__ = "recipe_url_aliases"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    path: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    path: Mapped[str] = mapped_column(String(255), nullable=False)
     recipe_id: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("recipes.id", ondelete="SET NULL"), nullable=True)
+        String(36), ForeignKey("recipes.id", ondelete="RESTRICT"), nullable=True)
     category_id: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("categories.id", ondelete="SET NULL"), nullable=True)
+        String(36), ForeignKey("categories.id", ondelete="RESTRICT"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
 
     __table_args__ = (
-        sa.Computed("has_recipe", sa.text("(recipe_id IS NOT NULL)")),
-        sa.Computed("has_category", sa.text("(category_id IS NOT NULL)")),
         sa.CheckConstraint(
-            "NOT (has_recipe = 1 AND has_category = 1) AND NOT (has_recipe = 0 AND has_category = 0)",
+            "(recipe_id IS NOT NULL) <> (category_id IS NOT NULL)",
             name="chk_alias_exactly_one",
         ),
         sa.UniqueConstraint("path", name="uq_aliases_path"),
@@ -777,19 +789,20 @@ class RecipeUrlAlias(Base):
 ```
 
 - [ ] **Step 3: Write the failing tests** (`tests/test_aliases.py`):
-  - `test_columns`: exactly `{id, path, recipe_id, category_id, has_recipe, has_category, created_at}`; `id varchar(36)`, `path varchar(255)`, `recipe_id varchar(36)`, `category_id varchar(36)`, `has_recipe/tinyint(1)` (MariaDB reports the generated boolean as `tinyint(1)`), `has_category tinyint(1)`, `created_at datetime`.
+  - `test_columns`: exactly `{id, path, recipe_id, category_id, created_at}`; `id varchar(36)`, `path varchar(255)`, `recipe_id varchar(36)`, `category_id varchar(36)`, `created_at datetime`.
   - `test_indexes`: `PRIMARY == [id]`, `uq_aliases_path == [path]`.
-  - `test_fks`: `recipe_id → recipes.id SET NULL`; `category_id → categories.id SET NULL`.
-  - `test_recipe_alias_ok`: INSERT `(path='/\u002fp=1234', recipe_id=<probe recipe>, category_id=NULL)` → succeeds; read back; cleanup.
-  - `test_category_alias_ok`: INSERT `(path='/\u002fpage_id=16', recipe_id=NULL, category_id='<seeded breakfast uuid>')` → succeeds; cleanup.
+  - `test_fks`: `recipe_id → recipes.id RESTRICT`; `category_id → categories.id RESTRICT`.
+  - `test_recipe_alias_ok`: INSERT `(path='/?p=1234', recipe_id=<probe recipe>, category_id=NULL)` → succeeds; read back; cleanup.
+  - `test_category_alias_ok`: INSERT `(path='/?page_id=16', recipe_id=NULL, category_id='<seeded breakfast uuid>')` → succeeds; cleanup.
   - `test_both_targets_rejected`: INSERT with **both** ids set → `IntegrityError` (check `chk_alias_exactly_one` violation in the error text or constraint name where the driver exposes it).
-  - `test_neither_target_rejected`: INSERT `(path='/\u002fp=9999', recipe_id=NULL, category_id=NULL)` → `IntegrityError`.
+  - `test_neither_target_rejected`: INSERT `(path='/?p=9999', recipe_id=NULL, category_id=NULL)` → `IntegrityError`.
   - `test_duplicate_path_rejected`: same `path` twice (different targets) → `IntegrityError` on `uq_aliases_path`.
-  - `test_set_null_recipe`: seeded category alias untouched; create probe recipe + its alias; `DELETE FROM recipes WHERE id=<probe>` → alias row survives with `recipe_id IS NULL`, now rejected-by-check… (expectation: after SET NULL fires, the row has both NULL → the check constraint would then be violated on **future** statements, but MariaDB applies CHECKs at write time only — the row persists. Assert: row exists, `recipe_id IS NULL`. This is the documented operator-resolution case; note it in a test comment so a future FK-rule change is a conscious edit, not a surprise.)
+  - `test_recipe_target_delete_restricted`: create two probe recipes and an alias pointing to the first. Deleting the first recipe raises `IntegrityError`; the alias still points to it. Reassign the alias to the second recipe, then delete the first successfully; the alias still has exactly one valid target.
+  - `test_category_target_delete_restricted`: create two owner-managed probe categories, with an alias pointing to the first. Deleting the first raises `IntegrityError`; reassign the alias to the second, then delete the first successfully. Clean up all probe rows in `finally`.
 
-- [ ] **Step 4: Migration `<r4>_v4_url_aliases.py`** — generate; align DDL: the two `GENERATED ALWAYS AS (…)` VIRTUAL columns, the named `CHECK chk_alias_exactly_one`, `uq_aliases_path`, both SET NULL FKs (named `recfk_aliases_recipe` / `recfk_aliases_category` per Task 1 convention). Apply: v0→…→v4 clean.
+- [ ] **Step 4: Migration `<r4>_v4_url_aliases.py`** — generate; align DDL: the named direct `CHECK chk_alias_exactly_one`, `uq_aliases_path`, both RESTRICT FKs (named `recfk_aliases_recipe` / `recfk_aliases_category` per Task 1 convention). Apply: v0→…→v4 clean.
 
-- [ ] **Step 5: Run tests** — `env $CT .venv/bin/pytest tests/test_aliases.py -v` → all pass. Cross-check `SHOW CREATE TABLE recipe_url_aliases` (generated columns + CHECK must appear verbatim).
+- [ ] **Step 5: Run tests** — `env $CT .venv/bin/pytest tests/test_aliases.py -v` → all pass. Cross-check `SHOW CREATE TABLE recipe_url_aliases` (CHECK and RESTRICT FKs must appear).
 
 - [ ] **Step 6: Tear down, prove dev stack untouched, commit**:
 
@@ -967,7 +980,7 @@ def test_exact_table_inventory():
 (Exact-set assert both directions — the missing-table case is the obvious half; the extra-table half is what catches unreviewed DDL.)
 
 - [ ] **Step 3: Cross-table consistency probes:**
-  - **Full deep cascade**: probe recipe + 3 sections (one per kind) + 2 items each + membership in 2 seeded categories + 1 tag + 1 recipe alias + 1 audit log row (in a probe run) → `DELETE FROM recipes WHERE id = <probe>` → assert: `recipe_sections` and `recipe_items` back to baseline; `recipe_categories` rows for this recipe gone (the *other* seed-category rows for other recipes untouched); `recipe_tags` row gone; alias row survives with `recipe_id IS NULL` (Task 4's SET NULL, per its locked behavior); audit log row survives with `recipe_id IS NULL` (Task 5's SET NULL). One delete, every rule verified at once.
+  - **Alias guard, then full deep cascade**: create two probe recipes. Give the first 3 sections (one per kind) with 2 items each, memberships in 2 seeded categories and 1 tag, a recipe alias, and 1 audit log row in a probe run. `DELETE` of the first recipe must fail while its alias points to it; assert that the recipe and all related rows remain intact. Reassign the alias to the second probe recipe; then delete the first. Assert its sections/items and category/tag memberships return to baseline, the alias still points to the second valid recipe, and the audit log survives with `recipe_id IS NULL` (Task 5's audit FK). Clean up the alias and second probe recipe in `finally`.
   - **Seed stability after the full chain**: `SELECT slug, position FROM categories ORDER BY position` still exactly the 8 DL-4 rows — proves the v5 migration didn't perturb v3's data.
   - **ID-width invariant**: query `information_schema.columns` for every column of every table in the inventory; assert every column named `id` or ending `_id` that is a UUID FK/PK is `varchar(36)`, and the **only** `char(64)` column in the whole schema is `migration_runs.file_sha256` (DL-5's single exception — the auth plan will add `sessions.id_hash` etc. as char-64 by explicit later decision; this test is the guard that keeps that door in the auth plan, not this one).
 
@@ -982,7 +995,7 @@ All green (the v0 `tests/test_models.py` users-shape test runs against the same 
 - [ ] **Step 5: Prove the dev stack is untouched**, then **commit**:
 
 ```bash
-docker rm -f cookbook-test-db
+docker stop cookbook-test-db
 docker compose ps --format '{{.Name}} {{.Status}}' > /tmp/devstack-after.txt
 diff /tmp/devstack-before.txt /tmp/devstack-after.txt && echo "dev stack untouched"
 git add tests/test_schema_inventory.py
@@ -1003,6 +1016,7 @@ Each merge requires owner approval (branch-per-task; merge to `main` only on exp
 
 **Open decisions carried forward:**
 
-- **P1 — block deletion of an in-use category (proposal, awaiting owner approval).** *Recommendation: yes.* Deleting a category that still has recipe memberships should fail (or be blocked until its recipes are reassigned), so no recipe silently loses the membership it held — DL-4's "must not lose the recipes' other membership." The plan's default is the least-surprising option: a DB-side `ON DELETE RESTRICT` on `recipe_categories.category_id` (and, for symmetry, `recipe_tags.tag_id`) — Task 3 locks it, `test_in_use_category_protected` pins it, and `test_join_fks` asserts the `RESTRICT` rule. If the owner **declines** the hard DB guard, the guard moves to app-level save-time validation + UI (read/admin plan) and the Task 3 RESTRICT FK + its two test assertions are dropped; the recommendation itself is unchanged (in-use categories are still not deletable). Owner decision needed before Task 3's migration is cut.
+- **DL-6 — approved 2026-10-10:** Block deletion of in-use categories with `recipe_categories.category_id ON DELETE RESTRICT`; block deletion of recipe/category alias targets with `recipe_url_aliases` FKs `ON DELETE RESTRICT`. Admin/API flows explain the block and allow deliberate membership or alias reassignment before retrying. Preserve every legacy alias's valid target.
+- **O6 — tag deletion policy:** The draft `recipe_tags.tag_id ON DELETE RESTRICT` in Task 3 has not been approved by the owner. Resolve whether deleting an in-use tag is blocked or removes its memberships before implementing the Task 3 migration; update its model and tests accordingly.
 - **O5 — FULLTEXT/index strategy**, benchmarked on the migrated corpus in the search plan; nothing in this plan blocks on it.
 - **Owner-ordered tags (ordering rule 6)** — if the owner later wants an owner-manageable tag order, that is a new migration under the same task/branch discipline.
