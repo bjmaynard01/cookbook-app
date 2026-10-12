@@ -748,7 +748,7 @@ git commit -m "feat: v3 organization — categories/tags + joins + DL-4 seed (sp
 
 `IS NOT NULL` always yields true or false, even when the FK itself is NULL, so the expression does not become SQL NULL. It rejects both "both set" and "neither set"; a single-target row passes.
 
-**Verified against isolated MariaDB 11 (`mariadb:11`) on 2026-10-11.** Probes (each in a fresh `--tmpfs /var/lib/mysql` container, no anonymous volume, torn down after use):
+**Verified against isolated MariaDB 11 (`mariadb:11`) on 2026-10-11.** Probes used disposable containers with `--tmpfs /var/lib/mysql`, no anonymous volume, torn down after use:
 
 - recipe-only alias: accepted
 - category-only alias: accepted

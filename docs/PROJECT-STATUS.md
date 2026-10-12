@@ -48,10 +48,11 @@ the branch/commit below are a snapshot, not a substitute for those commands.
   `recipe_sections` and `recipe_items` work. Then proceed through Task 6.3
   organization, 6.4 aliases, 6.5 migration audit, and 6.6 chain verification,
   with owner review at each merge gate.
-- The data-model plan's executable MariaDB examples for future tables still
-  require validation during their implementation slices. In particular, test
-  the alias CHECK and RESTRICT behavior against isolated MariaDB 11 before
-  creating the 6.4 migration.
+- The alias CHECK and RESTRICT behavior was probed on disposable MariaDB 11
+  on 2026-10-11: one-target rows inserted, zero/two-target rows failed the
+  CHECK, referenced-target deletes failed, and reassignment allowed the old
+  recipe's deletion while retaining the alias. Task 6.4 must still test its
+  actual Alembic migration and ORM mapping against isolated MariaDB.
 
 ## Moving to desktop or cloud
 
