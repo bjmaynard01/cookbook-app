@@ -5,7 +5,7 @@ MariaDB. The repository currently contains the application foundation, health
 endpoints, the `users` table, and the first Task 6 `recipes` table. Recipe
 editing, browsing, import, authentication, and the remaining data-model tables
 are planned but not yet implemented. See [project status](docs/PROJECT-STATUS.md)
-before starting new work.
+and the [desktop handoff](docs/DESKTOP-HANDOFF.md) before starting new work.
 
 ## Work on another machine
 
