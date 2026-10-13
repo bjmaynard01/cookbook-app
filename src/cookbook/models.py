@@ -16,6 +16,7 @@ from sqlalchemy import (
     Boolean,
     Date,
     DateTime,
+    Enum,
     ForeignKey,
     Integer,
     String,
@@ -87,3 +88,65 @@ class Recipe(Base):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Recipe {self.slug!r}>"
+
+
+class RecipeSection(Base):
+    """Ordered body block for a recipe (DL-3: `heading?` + `kind` + `lines[]`).
+
+    `kind` is a native MariaDB ENUM('ingredients','steps','note') — invalid
+    literals are rejected at the DB layer (strict mode), not the app.
+    `position` is UNIQUE within a recipe (`uq_sections_recipe_position`);
+    dense 1..N is a future save-layer invariant, not a DB guarantee.
+    No timestamps: body rows are wholesale-replaced on save (later plan);
+    provenance lives on `recipes`.
+    """
+    __tablename__ = "recipe_sections"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    recipe_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("recipes.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    heading: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    kind: Mapped[str] = mapped_column(
+        Enum("ingredients", "steps", "note", name="recipe_section_kind"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("recipe_id", "position", name="uq_sections_recipe_position"),
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<RecipeSection {self.recipe_id}/{self.position} {self.kind}>"
+
+
+class RecipeItem(Base):
+    """One ordered line inside a `recipe_sections` row (D4, extended by DL-3).
+
+    `raw_text` is the source of truth — NOT NULL for every section kind.
+    The four `quantity_text` / `unit` / `item` / `preparation` columns are
+    best-effort parses, populated only for `kind='ingredients'` lines but
+    defined uniformly (nullable) so the reader does not special-case.
+    `position` is UNIQUE within a section (`uq_items_section_position`);
+    dense 1..M is a future save-layer invariant, not a DB guarantee.
+    No timestamps: see `RecipeSection`.
+    """
+    __tablename__ = "recipe_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    section_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("recipe_sections.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    raw_text: Mapped[str] = mapped_column(Text, nullable=False)
+    quantity_text: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    unit: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    item: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    preparation: Mapped[str | None] = mapped_column(String(300), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("section_id", "position", name="uq_items_section_position"),
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<RecipeItem {self.section_id}/{self.position}>"
