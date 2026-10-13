@@ -77,33 +77,45 @@ def test_sections_table_shape() -> None:
 
 def test_sections_indexes() -> None:
     """Task items 2 + 3: PK contains ONLY `id`; the named
-    `uq_sections_recipe_position == [recipe_id, position]`; and an index whose
-    leading column is `recipe_id` (the ORM's explicit `index=True`), so a
-    recipe's sections can be looked up by FK efficiently."""
+    `uq_sections_recipe_position == [recipe_id, position]`; AND the explicit
+    non-unique FK-lookup index `ix_recipe_sections_recipe_id == [recipe_id]`.
+    The explicit index is asserted *separately* from the ones we've already
+    pinned (PK + composite UNIQUE) — it is `NON-UNIQUE`, so a query that only
+    filters on `non_unique = 0` would never surface it (Codex gap #2)."""
 
     async def run() -> None:
         engine = get_engine()
         async with engine.connect() as conn:
-            res = await conn.execute(text(
+            # unique indexes (for PK + composite UNIQUE assertions)
+            ures = await conn.execute(text(
                 "SELECT index_name, column_name, seq_in_index "
                 "FROM information_schema.statistics "
                 "WHERE table_schema = DATABASE() AND table_name = 'recipe_sections' "
                 "AND non_unique = 0 ORDER BY index_name, seq_in_index"))
-            indexes: dict[str, list[str]] = {}
-            for name, col, _seq in res:
-                indexes.setdefault(name, []).append(col)
+            unique_indexes: dict[str, list[str]] = {}
+            for name, col, _seq in ures:
+                unique_indexes.setdefault(name, []).append(col)
 
-            assert indexes.get("PRIMARY") == ["id"], (
-                f"PK should be exactly [id], got {indexes.get('PRIMARY')!r}")
-            assert indexes.get("uq_sections_recipe_position") == ["recipe_id", "position"], (
+            # non-unique index (the explicit FK-lookup index)
+            nres = await conn.execute(text(
+                "SELECT index_name, column_name, seq_in_index "
+                "FROM information_schema.statistics "
+                "WHERE table_schema = DATABASE() AND table_name = 'recipe_sections' "
+                "AND non_unique = 1 ORDER BY index_name, seq_in_index"))
+            nonunique_indexes: dict[str, list[str]] = {}
+            for name, col, _seq in nres:
+                nonunique_indexes.setdefault(name, []).append(col)
+
+            assert unique_indexes.get("PRIMARY") == ["id"], (
+                f"PK should be exactly [id], got {unique_indexes.get('PRIMARY')!r}")
+            assert unique_indexes.get("uq_sections_recipe_position") == ["recipe_id", "position"], (
                 "named unique (recipe_id, position) index wrong: "
-                f"{indexes}")
-            # The explicit recipe_id FK index: a unique index led by recipe_id.
-            # (The composite uq_sections_recipe_position already leads with
-            #  recipe_id and satisfies the FK; the ORM also emits ix_..._recipe_id.)
-            leading = [n for n, cols in indexes.items() if cols[:1] == ["recipe_id"]]
-            assert leading, (
-                f"no index leads with recipe_id for the FK lookup: {indexes}")
+                f"{unique_indexes}")
+            # explicit FK-lookup index: NON-UNIQUE, exactly [recipe_id]
+            assert nonunique_indexes.get("ix_recipe_sections_recipe_id") == ["recipe_id"], (
+                f"explicit FK index ix_recipe_sections_recipe_id should be "
+                f"non-unique with exactly [recipe_id], got "
+                f"{nonunique_indexes.get('ix_recipe_sections_recipe_id')!r}")
 
     try:
         asyncio.run(run())
@@ -112,24 +124,32 @@ def test_sections_indexes() -> None:
 
 
 def test_sections_fk() -> None:
-    """Task item 4: `recipe_id` is a FK to `recipes.id` with ON DELETE CASCADE
-    (named `recfk_sections_recipe` in the migration)."""
+    """Task item 4: `recipe_id` is a FK to `recipes.id` with ON DELETE CASCADE.
+    Codex gap #3: also assert the constraint NAME and REFERENCED column —
+    together these fully identify the relationship."""
 
     async def run() -> None:
         engine = get_engine()
         async with engine.connect() as conn:
             res = await conn.execute(text(
                 "SELECT kcu.constraint_name, kcu.column_name, "
-                "       kcu.referenced_table_name, rc.delete_rule "
+                "       kcu.referenced_table_name, kcu.referenced_column_name, "
+                "       rc.delete_rule "
                 "FROM information_schema.key_column_usage kcu "
                 "JOIN information_schema.referential_constraints rc "
                 "  ON rc.constraint_name = kcu.constraint_name "
                 " AND rc.constraint_schema = kcu.constraint_schema "
                 "WHERE kcu.table_schema = DATABASE() AND kcu.table_name = 'recipe_sections' "
                 "ORDER BY kcu.column_name"))
-            by_col = {r[1]: (r[2], r[3]) for r in res}  # col -> (ref_table, delete_rule)
-            assert by_col.get("recipe_id") == ("recipes", "CASCADE"), (
-                f"recipe_id FK: {by_col.get('recipe_id')!r}")
+            # col -> (constraint_name, ref_table, ref_column, delete_rule)
+            by_col = {r[1]: (r[0], r[2], r[3], r[4]) for r in res}
+            got = by_col.get("recipe_id")
+            assert got == (
+                "recfk_sections_recipe",   # constraint name (migration DDL)
+                "recipes",                  # referenced table
+                "id",                       # referenced column
+                "CASCADE",                  # delete rule
+            ), f"recipe_id FK: {got!r}"
 
     try:
         asyncio.run(run())
@@ -171,14 +191,15 @@ def test_sections_kind_valid_and_invalid() -> None:
             # (2) invalid literal → strict MariaDB must reject.
             bad_id = str(uuid.uuid4())
             try:
-                async with get_engine().connect() as conn:
+                async with get_engine().begin() as conn:
                     await conn.execute(text(
                         "INSERT INTO recipe_sections "
                         "(id, recipe_id, position, heading, kind) "
                         "VALUES (:id, :rid, 42, 'bad', 'not-a-kind')"),
                         {"id": bad_id, "rid": rid})
-                # An INSERT through .execute() auto-commits on close; if we got
-                # here the DB wrongly accepted an invalid enum value.
+                # Reaching here means the DB wrongly accepted an invalid enum
+                # literal — .begin() committed. (If the INSERT had succeeded,
+                # the outer finally below will still remove the row.)
             except sqlalchemy.exc.DataError as exc:
                 assert ("kind" in str(exc) or "1265" in str(exc)
                         or "Invalid value" in str(exc)), (

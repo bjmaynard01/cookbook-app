@@ -76,29 +76,45 @@ def test_items_table_shape() -> None:
 
 def test_items_indexes() -> None:
     """Task items 2 + 3: PK contains ONLY `id`; the named
-    `uq_items_section_position == [section_id, position]`; and an index whose
-    leading column is `section_id` (the ORM's explicit `index=True`)."""
+    `uq_items_section_position == [section_id, position]`; AND the explicit
+    non-unique FK-lookup index `ix_recipe_items_section_id == [section_id]`.
+    The explicit index is asserted *separately* from the ones we've already
+    pinned — it is `NON-UNIQUE`, so a query that only filters on
+    `non_unique = 0` would never surface it (Codex gap #2)."""
 
     async def run() -> None:
         engine = get_engine()
         async with engine.connect() as conn:
-            res = await conn.execute(text(
+            # unique indexes (for PK + composite UNIQUE assertions)
+            ures = await conn.execute(text(
                 "SELECT index_name, column_name, seq_in_index "
                 "FROM information_schema.statistics "
                 "WHERE table_schema = DATABASE() AND table_name = 'recipe_items' "
                 "AND non_unique = 0 ORDER BY index_name, seq_in_index"))
-            indexes: dict[str, list[str]] = {}
-            for name, col, _seq in res:
-                indexes.setdefault(name, []).append(col)
+            unique_indexes: dict[str, list[str]] = {}
+            for name, col, _seq in ures:
+                unique_indexes.setdefault(name, []).append(col)
 
-            assert indexes.get("PRIMARY") == ["id"], (
-                f"PK should be exactly [id], got {indexes.get('PRIMARY')!r}")
-            assert indexes.get("uq_items_section_position") == ["section_id", "position"], (
+            # non-unique index (the explicit FK-lookup index)
+            nres = await conn.execute(text(
+                "SELECT index_name, column_name, seq_in_index "
+                "FROM information_schema.statistics "
+                "WHERE table_schema = DATABASE() AND table_name = 'recipe_items' "
+                "AND non_unique = 1 ORDER BY index_name, seq_in_index"))
+            nonunique_indexes: dict[str, list[str]] = {}
+            for name, col, _seq in nres:
+                nonunique_indexes.setdefault(name, []).append(col)
+
+            assert unique_indexes.get("PRIMARY") == ["id"], (
+                f"PK should be exactly [id], got {unique_indexes.get('PRIMARY')!r}")
+            assert unique_indexes.get("uq_items_section_position") == ["section_id", "position"], (
                 "named unique (section_id, position) index wrong: "
-                f"{indexes}")
-            leading = [n for n, cols in indexes.items() if cols[:1] == ["section_id"]]
-            assert leading, (
-                f"no index leads with section_id for the FK lookup: {indexes}")
+                f"{unique_indexes}")
+            # explicit FK-lookup index: NON-UNIQUE, exactly [section_id]
+            assert nonunique_indexes.get("ix_recipe_items_section_id") == ["section_id"], (
+                f"explicit FK index ix_recipe_items_section_id should be "
+                f"non-unique with exactly [section_id], got "
+                f"{nonunique_indexes.get('ix_recipe_items_section_id')!r}")
 
     try:
         asyncio.run(run())
@@ -107,24 +123,32 @@ def test_items_indexes() -> None:
 
 
 def test_items_fk() -> None:
-    """Task item 4: `section_id` is a FK to `recipe_sections.id` with
-    ON DELETE CASCADE (named `recfk_items_section` in the migration)."""
+    """Task item 4: `section_id` is a FK to `recipe_sections.id` with ON DELETE
+    CASCADE. Codex gap #3: also assert the constraint NAME and REFERENCED
+    column — together these fully identify the relationship."""
 
     async def run() -> None:
         engine = get_engine()
         async with engine.connect() as conn:
             res = await conn.execute(text(
                 "SELECT kcu.constraint_name, kcu.column_name, "
-                "       kcu.referenced_table_name, rc.delete_rule "
+                "       kcu.referenced_table_name, kcu.referenced_column_name, "
+                "       rc.delete_rule "
                 "FROM information_schema.key_column_usage kcu "
                 "JOIN information_schema.referential_constraints rc "
                 "  ON rc.constraint_name = kcu.constraint_name "
                 " AND rc.constraint_schema = kcu.constraint_schema "
                 "WHERE kcu.table_schema = DATABASE() AND kcu.table_name = 'recipe_items' "
                 "ORDER BY kcu.column_name"))
-            by_col = {r[1]: (r[2], r[3]) for r in res}  # col -> (ref_table, delete_rule)
-            assert by_col.get("section_id") == ("recipe_sections", "CASCADE"), (
-                f"section_id FK: {by_col.get('section_id')!r}")
+            # col -> (constraint_name, ref_table, ref_column, delete_rule)
+            by_col = {r[1]: (r[0], r[2], r[3], r[4]) for r in res}
+            got = by_col.get("section_id")
+            assert got == (
+                "recfk_items_section",   # constraint name (migration DDL)
+                "recipe_sections",        # referenced table
+                "id",                     # referenced column
+                "CASCADE",                # delete rule
+            ), f"section_id FK: {got!r}"
 
     try:
         asyncio.run(run())

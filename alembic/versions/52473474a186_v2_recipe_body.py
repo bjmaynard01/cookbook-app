@@ -32,7 +32,8 @@ def upgrade() -> None:
     sa.Column('kind', sa.Enum('ingredients', 'steps', 'note', name='recipe_section_kind'), nullable=False),
     sa.ForeignKeyConstraint(['recipe_id'], ['recipes.id'], name='recfk_sections_recipe', ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('recipe_id', 'position', name='uq_sections_recipe_position')
+    sa.UniqueConstraint('recipe_id', 'position', name='uq_sections_recipe_position'),
+    mysql_engine='InnoDB', mysql_charset='utf8mb4'
     )
     op.create_index(op.f('ix_recipe_sections_recipe_id'), 'recipe_sections', ['recipe_id'], unique=False)
 
@@ -47,7 +48,8 @@ def upgrade() -> None:
     sa.Column('preparation', sa.String(length=300), nullable=True),
     sa.ForeignKeyConstraint(['section_id'], ['recipe_sections.id'], name='recfk_items_section', ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('section_id', 'position', name='uq_items_section_position')
+    sa.UniqueConstraint('section_id', 'position', name='uq_items_section_position'),
+    mysql_engine='InnoDB', mysql_charset='utf8mb4'
     )
     op.create_index(op.f('ix_recipe_items_section_id'), 'recipe_items', ['section_id'], unique=False)
 

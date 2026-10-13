@@ -114,6 +114,7 @@ class RecipeSection(Base):
 
     __table_args__ = (
         UniqueConstraint("recipe_id", "position", name="uq_sections_recipe_position"),
+        {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
     )
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -146,6 +147,7 @@ class RecipeItem(Base):
 
     __table_args__ = (
         UniqueConstraint("section_id", "position", name="uq_items_section_position"),
+        {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
     )
 
     def __repr__(self) -> str:  # pragma: no cover
