@@ -24,7 +24,8 @@ Verbatim from the spec + decision log — every task's requirements implicitly i
 - **DL-3 (binding, supersedes §3.2/§3.3 for the store shape):** "Body model = ordered `section[]` = list of `{heading?, kind: 'ingredients'|'steps'|'note', lines[]}`. `raw_text`-first (D4) applies to every line in every section."
 - **DL-4 (binding):** "Categories are data, never hardcoded" — the 8 WP menu categories + "Others" are seed data in owner-manageable order; deleting an in-use category must not lose the recipes' other membership.
 - **DL-5 (binding):** UUIDv4 identifiers (all `id` PKs + FKs referencing them) are `VARCHAR(36)` — not `CHAR(36)`. Fixed-length hashes/tokens keep their spec-defined `CHAR` types (auth plan only).
-- **DL-6 (owner-approved 2026-10-10):** An alias always has exactly one existing target. Recipe and category alias FKs use `ON DELETE RESTRICT`; reassign an alias to another valid target before deleting its old target. In-use categories cannot be deleted until their recipe memberships are deliberately reassigned or removed; `recipe_categories.category_id` uses `ON DELETE RESTRICT`. Admin/API flows must explain these blocks. This approval does not decide tag deletion policy.
+- **DL-6 (owner-approved 2026-10-10):** An alias always has exactly one existing target. Recipe and category alias FKs use `ON DELETE RESTRICT`; reassign an alias to another valid target before deleting its old target. In-use categories cannot be deleted until their recipe memberships are deliberately reassigned or removed; `recipe_categories.category_id` uses `ON DELETE RESTRICT`. Admin/API flows must explain these blocks.
+- **DL-7 (owner-approved 2026-10-13):** Tag deletion is allowed and removes only its recipe memberships. The recipes, their body content (sections/items), their category memberships, and every other tag / membership all survive. A tag rename is a plain UPDATE on `slug` / `name` — the immutable `id` PK and every `recipe_tags` row stay intact (no membership churn). `recipe_tags.tag_id` uses `ON DELETE CASCADE`; both joins' `recipe_id` FKs also use `ON DELETE CASCADE`. Resolves open decision O6 and overrides the previous draft `ON DELETE RESTRICT` rule for `recipe_tags.tag_id`.
 - **DL-1 (binding for seed/import, not for schema):** all 388 published recipes migrate; the 14 unmenued get the seeded "Others" category; draft 1865 excluded.
 
 **Owner standing orders (binding):** persistent storage on host bind mounts under `/mnt/container/<container>`; no named or anonymous Docker volumes; one code path (only config differs between dev/prod); dev DB data disposable (D22) but **do not advance the running dev stack while each schema slice is unmerged** — test against an isolated `cookbook` database in a disposable `cookbook-test-db` container with explicit tmpfs for its data directory; branch-per-task, merge to `main` only on explicit owner approval.
@@ -657,7 +658,7 @@ No `position` — shared-contract ordering rule 6 (free-form per D13; an owner-o
 
 `recipe_categories`: composite PK `(recipe_id, category_id)` — many-to-many, no per-recipe uniqueness beyond it (D12). FKs: `recipe_id → recipes.id ON DELETE CASCADE` (membership dies with the recipe); `category_id → categories.id ON DELETE RESTRICT` (**DL-6, owner-approved**). A category with members cannot be deleted until those memberships are deliberately reassigned or removed. The future admin/API flow must report the blocked deletion and offer reassignment; it must not silently drop memberships or leave a recipe without a category.
 
-`recipe_tags`: identical shape: composite PK `(recipe_id, tag_id)`, `recipe_id → recipes.id ON DELETE CASCADE`. The draft `tag_id → tags.id ON DELETE RESTRICT` rule below is **not** part of DL-6; confirm the tag-deletion policy with the owner before cutting Task 3's migration (open decision O6).
+`recipe_tags`: identical shape: composite PK `(recipe_id, tag_id)`, `recipe_id → recipes.id ON DELETE CASCADE`. `tag_id → tags.id ON DELETE CASCADE` (**DL-7, owner-approved 2026-10-13**): deleting an in-use tag is allowed and its memberships follow the tag (the recipes, their body, their categories, and every other tag/membership survive). Resolves **O6** and overrides the previous draft `ON DELETE RESTRICT` rule.
 
 **Locked seed set (spec §3.4 EVIDENCE + DL-4; seeded by this migration's `upgrade()`):**
 
@@ -689,7 +690,7 @@ recipe_categories = sa.Table(
 recipe_tags = sa.Table(
     "recipe_tags", Base.metadata,
     sa.Column("recipe_id", sa.String(36), sa.ForeignKey("recipes.id", ondelete="CASCADE"), primary_key=True),
-    sa.Column("tag_id", sa.String(36), sa.ForeignKey("tags.id", ondelete="RESTRICT"), primary_key=True),  # O6 draft: confirm before migration
+    sa.Column("tag_id", sa.String(36), sa.ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True),  # DL-7 (resolved O6): in-use tag delete is allowed
     {"mysql_engine": "InnoDB"},
 )
 ```
@@ -1017,6 +1018,6 @@ Each merge requires owner approval (branch-per-task; merge to `main` only on exp
 **Open decisions carried forward:**
 
 - **DL-6 — approved 2026-10-10:** Block deletion of in-use categories with `recipe_categories.category_id ON DELETE RESTRICT`; block deletion of recipe/category alias targets with `recipe_url_aliases` FKs `ON DELETE RESTRICT`. Admin/API flows explain the block and allow deliberate membership or alias reassignment before retrying. Preserve every legacy alias's valid target.
-- **O6 — tag deletion policy:** The draft `recipe_tags.tag_id ON DELETE RESTRICT` in Task 3 has not been approved by the owner. Resolve whether deleting an in-use tag is blocked or removes its memberships before implementing the Task 3 migration; update its model and tests accordingly.
+- **O6 — tag deletion policy — RESOLVED by DL-7 (owner-approved 2026-10-13):** Tag deletion is allowed and its `recipe_tags` memberships follow the tag (`ON DELETE CASCADE`). Renaming a tag is a plain UPDATE on `slug` / `name` — the immutable `id` PK and every `recipe_tags` row stay intact. See the DL-7 entry in the global constraints above; this supersedes the previous draft `ON DELETE RESTRICT` rule.
 - **O5 — FULLTEXT/index strategy**, benchmarked on the migrated corpus in the search plan; nothing in this plan blocks on it.
 - **Owner-ordered tags (ordering rule 6)** — if the owner later wants an owner-manageable tag order, that is a new migration under the same task/branch discipline.

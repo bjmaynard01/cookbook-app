@@ -14,12 +14,15 @@ from decimal import Decimal
 from sqlalchemy import (
     DECIMAL,
     Boolean,
+    Column,
     Date,
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     String,
+    Table,
     Text,
     UniqueConstraint,
     func,
@@ -152,3 +155,89 @@ class RecipeItem(Base):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<RecipeItem {self.section_id}/{self.position}>"
+
+
+class Category(Base):
+    """A recipe grouping the owner can manage (DL-4: categories are data).
+
+    `position` is a dense table-wide order (`uq_categories_position`) driving
+    the home "by category" lane (DL-4 owner-manageable); dense 1..K is a
+    future save-layer invariant, not a DB trigger (ordering rule 3).
+    No timestamps: categories are order + identity, not audit rows.
+    An in-use category cannot be deleted (`recipe_categories.category_id`
+    uses ON DELETE RESTRICT — DL-6).
+    """
+    __tablename__ = "categories"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    slug: Mapped[str] = mapped_column(String(200), nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("slug", name="uq_categories_slug"),
+        UniqueConstraint("position", name="uq_categories_position"),
+        {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<Category {self.slug!r} pos={self.position}>"
+
+
+class Tag(Base):
+    """A free-form semantic tag (D13). No `position` in v1 (ordering rule 6:
+    tags carry no owner order; the "top semantic tags" ranking is a read/query
+    concern). No timestamps. Deleting a tag in use is allowed and removes its
+    memberships (`recipe_tags.tag_id` uses ON DELETE CASCADE — DL-7)."""
+
+    __tablename__ = "tags"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    slug: Mapped[str] = mapped_column(String(200), nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("slug", name="uq_tags_slug"),
+        {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<Tag {self.slug!r}>"
+
+
+# Many-to-many joins. Plain association tables on Base.metadata (no ORM
+# relationship per the v1 scope — no relationship()/backref/back_populates).
+# PK is (recipe_id, <target>_id) in that order, so recipe_id is the leading
+# PK column and needs no secondary index. The non-leading target FK column
+# gets an explicit non-unique index (ix_<table>_<target>_id), mirroring the
+# v2 convention where the PK-leading FK column carries no redundant index.
+# Dialect options are passed as keyword arguments to Table(), per convention.
+recipe_categories = Table(
+    "recipe_categories",
+    Base.metadata,
+    Column("recipe_id", String(36),
+           ForeignKey("recipes.id", name="recfk_recipe_categories_recipe",
+                      ondelete="CASCADE"),
+           primary_key=True),
+    Column("category_id", String(36),
+           ForeignKey("categories.id", name="recfk_recipe_categories_category",
+                      ondelete="RESTRICT"),
+           primary_key=True),
+    Index("ix_recipe_categories_category_id", "category_id"),
+    mysql_engine="InnoDB", mysql_charset="utf8mb4",
+)
+
+recipe_tags = Table(
+    "recipe_tags",
+    Base.metadata,
+    Column("recipe_id", String(36),
+           ForeignKey("recipes.id", name="recfk_recipe_tags_recipe",
+                      ondelete="CASCADE"),
+           primary_key=True),
+    Column("tag_id", String(36),
+           ForeignKey("tags.id", name="recfk_recipe_tags_tag",
+                      ondelete="CASCADE"),
+           primary_key=True),
+    Index("ix_recipe_tags_tag_id", "tag_id"),
+    mysql_engine="InnoDB", mysql_charset="utf8mb4",
+)
