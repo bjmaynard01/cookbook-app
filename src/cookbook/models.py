@@ -14,6 +14,7 @@ from decimal import Decimal
 from sqlalchemy import (
     DECIMAL,
     Boolean,
+    CheckConstraint,
     Column,
     Date,
     DateTime,
@@ -241,3 +242,48 @@ recipe_tags = Table(
     Index("ix_recipe_tags_tag_id", "tag_id"),
     mysql_engine="InnoDB", mysql_charset="utf8mb4",
 )
+
+
+class RecipeUrlAlias(Base):
+    """A legacy URL (e.g. ``/?p=1234``, ``/?page_id=16``) mapped to exactly one
+    existing recipe OR category (spec §3.5, D6/D17).
+
+    ``path`` is the full legacy path as observed — never normalized or slugified
+    at write time (the observed string is what must match on redirect). The
+    app-side 301 middleware (read plan) reads this table by ``path``; nothing in
+    this module serves HTTP.
+
+    Exactly-one-target rule (DL-6, owner-approved): the named
+    ``chk_alias_exactly_one`` CHECK requires that exactly one of ``recipe_id`` /
+    ``category_id`` is non-NULL (it rejects both set and neither set). Both FKs
+    use ``ON DELETE RESTRICT`` so an alias always retains a valid target; a
+    referenced recipe/category cannot be deleted until its aliases are
+    deliberately reassigned. Tag deletion policy (DL-7) does not touch this table.
+    No generated or helper columns; ``created_at`` is server ``CURRENT_TIMESTAMP``.
+    """
+    __tablename__ = "recipe_url_aliases"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    path: Mapped[str] = mapped_column(String(255), nullable=False)
+    recipe_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("recipes.id", name="recfk_aliases_recipe",
+                               ondelete="RESTRICT"), nullable=True)
+    category_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("categories.id", name="recfk_aliases_category",
+                               ondelete="RESTRICT"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "(recipe_id IS NOT NULL) <> (category_id IS NOT NULL)",
+            name="chk_alias_exactly_one",
+        ),
+        UniqueConstraint("path", name="uq_aliases_path"),
+        Index("ix_recipe_url_aliases_recipe_id", "recipe_id"),
+        Index("ix_recipe_url_aliases_category_id", "category_id"),
+        {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<RecipeUrlAlias {self.path!r}>"
