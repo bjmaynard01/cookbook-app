@@ -1,4 +1,4 @@
-# Cookbook project status — 2026-10-13
+# Cookbook project status — 2026-10-14
 
 This is the current cross-machine handoff. Read it before the older September
 `SESSION-HANDOFF` files, which describe completed foundation work. Confirm the
@@ -11,12 +11,12 @@ the branch/commit below are a snapshot, not a substitute for those commands.
 - `main` HEAD: **Task 6.2 merged at `d65dcb3`** (v2 ordered body —
   `recipe_sections` + `recipe_items`, DL-3). Task 6.1 recipes and its
   data-model plan are already on `main` beneath it.
-- **Task 6.3 organization is on branch `task/6.3-organization` and is PENDING
-  CODEX REVIEW — not merged.** It builds `categories` / `tags` + both join
-  tables + the DL-4 eight-category seed, and records DL-7. It has NOT been
-  committed yet in this session; the implementer will commit the six scoped
-  files only after verification, then stop for Codex review. The owner
-  approves merges.
+- Task 6.3 organization was committed as `b99b333` on
+  `task/6.3-organization`. Codex independently verified 50 passing tests,
+  the fresh forward migration chain, and no schema drift. The owner approved
+  merging and pushing on 2026-10-14. Check live Git state for integration
+  status. The migration head is `a2b53a9f0000`; the next slice is Task 6.4
+  aliases.
 - The owner and project manager make design and merge decisions jointly. A
   fresh-session local model implements on dedicated task branches; Codex
   reviews; the owner approves merges. Do not auto-prompt, push, or merge task
