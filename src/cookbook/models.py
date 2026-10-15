@@ -12,6 +12,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    CHAR,
     DECIMAL,
     Boolean,
     CheckConstraint,
@@ -287,3 +288,90 @@ class RecipeUrlAlias(Base):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<RecipeUrlAlias {self.path!r}>"
+
+
+class MigrationRun(Base):
+    """One importer run (spec §3.6, D8). The §5.2 importer writes a row per
+    invocation; the §5.3 verification gate reads this by run id. This model
+    locks the audit SHAPE only — there is no CLI/scheduler here.
+
+    ``status`` is a native MariaDB ENUM (``running``|``completed``|``failed``) —
+    the importer's state machine, checked at the DB layer (strict mode) so a typo
+    cannot be silent. It has a PYTHON default of ``'running'`` (a run starts
+    running) but NO server default: the importer always supplies the status it
+    wants (or relies on the Python default on insert).
+
+    The six INT counters carry a server default of 0 so a raw SQL insert that
+    omits them still lands a consistent zero (proven independently of the Python
+    default by the audit tests). ``file_sha256`` is ``CHAR(64)`` — DL-5's explicit
+    fixed-length-hash exception. ``operator_id`` is attribution-only (D10), SET
+    NULL on user delete. No timestamps beyond the server-default ``started_at``.
+    """
+    __tablename__ = "migration_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    source_file: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    file_sha256: Mapped[str | None] = mapped_column(CHAR(64), nullable=True)
+    status: Mapped[str] = mapped_column(
+        Enum("running", "completed", "failed", name="migration_run_status"),
+        nullable=False, default="running")
+    recipes_total: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0"))
+    recipes_imported: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0"))
+    recipes_skipped: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0"))
+    recipes_errors: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0"))
+    images_ok: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0"))
+    images_failed: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0"))
+    operator_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", name="recfk_run_operator",
+                               ondelete="SET NULL"), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_migration_runs_operator_id", "operator_id"),
+        {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<MigrationRun {self.id} {self.status}>"
+
+
+class MigrationRecipeLog(Base):
+    """Per-source-post outcome of one migration run (spec §3.6, D8).
+
+    Rows ``CASCADE`` with their run (per-run rows die with the run). ``recipe_id``
+    is NULL for rows that never produced a recipe (skipped-before-insert, errors)
+    and uses ``SET NULL`` on recipe delete so an audit trail is never destroyed —
+    only its recipe reference is cleared. ``outcome`` is a native ENUM
+    (``imported``|``skipped``|``error``). No ``created_at`` — spec §3.6 lists none.
+    """
+    __tablename__ = "migration_recipe_log"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    run_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("migration_runs.id", name="recfk_log_run",
+                               ondelete="CASCADE"), nullable=False)
+    source_post_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    recipe_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("recipes.id", name="recfk_log_recipe",
+                               ondelete="SET NULL"), nullable=True)
+    outcome: Mapped[str] = mapped_column(
+        Enum("imported", "skipped", "error", name="migration_log_outcome"),
+        nullable=False)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_migration_recipe_log_run_id", "run_id"),
+        Index("ix_migration_recipe_log_recipe_id", "recipe_id"),
+        {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<MigrationRecipeLog {self.run_id}/{self.outcome}>"
