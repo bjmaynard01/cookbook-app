@@ -242,8 +242,8 @@ def test_exact_base_table_inventory_and_alembic_head() -> None:
 def test_seed_rows_locked_and_no_others_or_tag_seeds() -> None:
     """The 8 locked DL-4 seed categories (exact id/slug/name/position, dense
     1..8) are still present with no 'Others' row (the importer owns it) and no
-    tag seeds. This runs AFTER the cascading probe test (B) so it proves the
-    cross-table cascade/audit did not perturb the v3 seed state."""
+    tag seeds. The cascading probe separately checks seeds before and after
+    its deletes, without depending on test execution order."""
     async def run() -> None:
         try:
             rows = await _seed_rows()   # (position, slug, name, id)
@@ -291,6 +291,20 @@ def test_uuid_and_char_type_invariants() -> None:
         try:
             cols = await _all_columns()
             live = {(t, c): typ for t, c, typ in cols}
+
+            # Discover keys independently of column type: a new key with an
+            # incorrect width must not escape detection by a varchar filter.
+            async with get_engine().connect() as conn:
+                keys = await conn.execute(text(
+                    "SELECT DISTINCT table_name, column_name "
+                    "FROM information_schema.key_column_usage "
+                    "WHERE table_schema = DATABASE() "
+                    "AND (constraint_name = 'PRIMARY' "
+                    "OR referenced_table_name IS NOT NULL)"))
+                key_columns = {tuple(row) for row in keys}
+            key_columns.discard((ALEMBIC_VERSION_TABLE, "version_num"))
+            assert key_columns == EXPECTED_UUID_COLUMNS, (
+                f"UUID PK/FK set differs: {key_columns ^ EXPECTED_UUID_COLUMNS}")
 
             # (1) every locked UUID column must exist and be varchar(36)
             for tc in EXPECTED_UUID_COLUMNS:
@@ -432,6 +446,8 @@ def test_alias_guard_then_full_cascade_and_audit_preservation() -> None:
 
     async def run() -> None:
         try:
+            seeds_before = await _seed_rows()
+            assert seeds_before == SEED_ROWS
             # No ORM relationships exist between Section->Item (v1 scope), so the
             # unit of work does NOT auto-order the INSERTs FK-first. We therefore
             # flush each parent BEFORE adding its children (same convention as
@@ -574,6 +590,8 @@ def test_alias_guard_then_full_cascade_and_audit_preservation() -> None:
                 f"log.recipe_id must be SET NULL by the recipe delete, got {log_row[2]!r}")
             assert log_row[3] == log_outcome, "log.outcome must be unchanged"
             assert log_row[4] == log_detail, "log.detail must be unchanged"
+            assert await _seed_rows() == seeds_before, (
+                "the cross-table probe must preserve all exact seed rows")
         finally:
             try:
                 await _cleanup(alias, [run_id], [log], [r1, r2], tag)
