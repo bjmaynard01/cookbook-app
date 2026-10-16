@@ -15,14 +15,37 @@ the branch/commit below are a snapshot, not a substitute for those commands.
   snapshot `57d252d`, migration head `b7a2f9c4d1e8`). Confirm live Git state
   with `git log -5 --oneline` before acting. The data-model plan is **closed**.
 - Next plan drafted (2026-10-16): **authentication** —
-  `docs/superpowers/plans/2026-10-16-authentication.md`. It is now a **revised
-  draft (v2)** after Codex review of the first draft (commit `f96eea1`):
-  concrete contracts C1–C6 (lockout schema + state machine; CSRF incl.
-  pre-auth tokens; cookie/HTTP-dev rules; trusted-proxy identity; concurrency
-  invariants with an `auth_locks` lock-row table; bootstrap/CLI/config),
-  nine implementation slices S1–S9, exact regression-inventory updates, and a
-  flagged-proposals/owner-decisions table (O-a…O-e). It has **not** been
-  owner-approved. No auth code exists yet: no `sessions` /
+  `docs/superpowers/plans/2026-10-16-authentication.md`. It is now at
+  **draft v3**: the first draft (`f96eea1`) and its v2 revision (commit
+  `8f7e8ce`) were both passed to Codex for review, and v3 corrects those
+  findings rather than re-drafting from scratch — notably the **browser-bound
+  pre-auth CSRF** contract (a per-browser secret cookie + a signed token bound
+  to it, purpose, and expiry, replacing the stateless signed token that Codex
+  flagged as *not* browser-bound); the **inventory arithmetic
+  (FOURTEEN app tables)** and **type-independent key discovery** in the
+  regression test (no longer filtering discovered PK/FK columns to `varchar(36)`
+  before comparing them to the UUID-key set); the **complete `sessions` /
+  `login_attempts` / `auth_locks` contract shapes** (every column, type,
+  nullability, FK name, index, and timestamp semantics pinned, no longer a
+  partially-specified shape); the **C1 lockout state machine** (exact
+  post-`locked_until`-expiry transitions; `lock_count` preserved across a
+  window expiry but reset on a successful login; `now`-injected clock shared
+  with the tests; the *login-vs-failure* race is handled by
+  "reset-is-source-of-truth," **not** by a claim that one upsert alone fixes it);
+  the **proxy/cookie consistency** (one owner of forwarded-header processing;
+  the `COOKIE_SECURE` contract stated honestly — a `false` override *does*
+  weaken production, we no longer claim it cannot; the stale-alternate-name
+  cookie rule; a non-`__Host-` dev cookie as a *recommendation*, not an
+  approval); the **working PowerShell verification block** (temp paths under
+  `$env:TEMP`/`.venv`, no `docker compose`, capture-then-`-eq 'healthy'`
+  status compare, `throw` on timeout/unhealthy, explicit `$LASTEXITCODE`
+  checks, `Remove-Item Env:\SECRET_KEY_FILE`/`Env:\DB_PASSWORD_FILE`, assigned
+  before-checked `$diff`, and comparison of *stable* name/status/started-at
+  identity fields — not the per-second `Up N hours` string); and the
+  **draft/approval status** — the flagged proposals below are **Codex
+  recommendations, not approvals**, and the owner **has not yet approved any
+  of them**. The plan remains a **draft pending owner review**.
+  No auth code exists yet: no `sessions` /
   `login_attempts` / `auth_locks` tables, no auth routes, no CLI entry point.
   It is the "auth plan" the data-model plan deferred.
 - The owner and project manager make design and merge decisions jointly. A
@@ -46,7 +69,7 @@ the branch/commit below are a snapshot, not a substitute for those commands.
 - Approved design spec:
   `docs/superpowers/specs/2026-09-20-cookbook-design.md`. Plans:
   `docs/superpowers/plans/2026-10-03-data-model.md` (complete) and
-  `docs/superpowers/plans/2026-10-16-authentication.md` (revised draft v2,
+  `docs/superpowers/plans/2026-10-16-authentication.md` (draft v3,
   pending owner approval).
 
 ## Decisions and next work
@@ -69,13 +92,16 @@ the branch/commit below are a snapshot, not a substitute for those commands.
   is blocked or drops its recipe memberships").
 - **Next work:** the data-model plan (Tasks 6.1–6.6) is complete and on
   `main`. The next active plan is **authentication**
-  (`docs/superpowers/plans/2026-10-16-authentication.md`), drafted 2026-10-16
-  and revised (v2) after the first draft's Codex review. It awaits owner
-  approval of the flagged proposals (O-a lockout backoff base/reset, O-b
-  pre-auth CSRF lifetime, O-c `__Host-` cookie name vs http-dev, O-d
-  `--force-owner-recreation` scope, O-e locked-login status code) before any
-  slice is implemented; the draft's recommendations are not approvals.
-  Implementation runs on task branches; owner approves each merge.
+  (`docs/superpowers/plans/2026-10-16-authentication.md`), now at **draft v3**
+  (revised after the first draft's Codex review and re-corrected this pass for
+  the findings above). It **awaits owner approval of every flagged proposal**
+  — O-a lockout backoff/reset, O-b browser-bound pre-auth CSRF lifetime, O-c
+  non-`__Host-` cookie in http-dev, O-d named-existing-account recovery scope,
+  O-e locked-login `429` + `Retry-After`, **O-f password minimum-length policy**
+  — **the owner has not yet approved any of them; the draft's recommendations
+  are not approvals, and the plan is a draft pending review**. No slice is
+  implemented until those approvals (or amendments) land. Implementation then
+  runs on task branches; the owner approves each merge.
 - The alias CHECK and RESTRICT behavior was probed on disposable MariaDB 11
   on 2026-10-11: one-target rows inserted, zero/two-target rows failed the
   CHECK, referenced-target deletes failed, and reassignment allowed the old
