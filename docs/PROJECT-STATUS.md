@@ -42,10 +42,7 @@ the branch/commit below are a snapshot, not a substitute for those commands.
   checks, `Remove-Item Env:\SECRET_KEY_FILE`/`Env:\DB_PASSWORD_FILE`, assigned
   before-checked `$diff`, and comparison of *stable* name/status/started-at
   identity fields — not the per-second `Up N hours` string); and the
-  **draft/approval status** — the flagged proposals below are **Codex
-  recommendations, not approvals**, and the owner **has not yet approved any
-  of them**. The plan remains a **draft pending owner review**.
-  No auth code exists yet: no `sessions` /
+  **approval status** — the owner approved O-a through O-f on 2026-10-16: minimum 8-character passwords, no complexity rules, and the other five recommended policies. HTMX header delivery and single-owner proxy handling were corrected before implementation. No auth code exists yet: no `sessions` /
   `login_attempts` / `auth_locks` tables, no auth routes, no CLI entry point.
   It is the "auth plan" the data-model plan deferred.
 - The owner and project manager make design and merge decisions jointly. A
@@ -117,3 +114,7 @@ each machine; never copy them into a commit or a Qwen prompt. The existing
 Compose file is dev-only and requires `/mnt/container/db` and
 `/mnt/container/app` on the host. A cloud deployment needs its own deployment
 configuration and persistent data/backup plan; none has been approved yet.
+
+## Owner approval — 2026-10-16
+
+Authentication policies O-a through O-f are approved. Password minimum: 8 characters, no complexity rules. Next implementation slice: Task 7.1 auth schema, after plan integration. No automatic task merges or pushes are authorized.
