@@ -4,6 +4,12 @@ v0 carries only the ``users`` table — enough to exercise the Alembic ->
 MariaDB migrations path in the foundation plan. All other models land in the
 data-model plan. PKs are VARCHAR(36) UUIDv4 (spec section 3, DL-5),
 DATETIME UTC.
+
+v6 (auth plan S1, schema only) adds ``Session`` (sessions),
+``LoginAttempt`` (login_attempts) and ``AuthLock`` (auth_locks). These are
+schema locks for the later auth service slices — no service, policy,
+session, lockout, or CSRF behavior lives in this module (the sliding-TTL
+and reset semantics are documented on the models as contracts for S4/S6).
 """
 from __future__ import annotations
 
@@ -30,6 +36,7 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects.mysql import DATETIME as MySQLDateTime
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -55,6 +62,113 @@ class User(Base):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<User {self.username}>"
+
+
+class Session(Base):
+    """One server-side authenticated session (auth plan C0.1, R1).
+
+    The raw session token is issued once by the future session service
+    (S4) and **never stored** — only its SHA-256 hash (``id_hash``,
+    ``CHAR(64)`` PK) identifies the row. ``csrf_token`` is the per-session
+    CSRF token (random 16 bytes hex, ``CHAR(32)``), supplied at issue and
+    deleted with the row.
+
+    Schema-only in v6: NO service implements these semantics yet. The
+    documented contract for the later session service: on issue it sets
+    ``last_seen_at = created_at`` and ``expires_at = last_seen_at + TTL``;
+    a session is valid iff ``expires_at >= now`` — expiry checks use
+    ``expires_at`` — and on each validated request the service updates
+    ``last_seen_at = now`` and recomputes ``expires_at`` (all timestamps
+    app-supplied in one consistent statement). Revocation is a row delete.
+
+    ``user_id`` uses ``ON DELETE CASCADE``: deleting a user kills their
+    sessions. InnoDB / utf8mb4.
+    """
+    __tablename__ = "sessions"
+
+    # SHA-256 hex of the raw token; supplied by the caller — no default.
+    id_hash: Mapped[str] = mapped_column(CHAR(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", name="fk_sessions_user",
+                               ondelete="CASCADE"), nullable=False)
+    # per-session CSRF token (16 bytes hex); supplied by the caller — no default.
+    csrf_token: Mapped[str] = mapped_column(CHAR(32), nullable=False)
+    # client IP at issue (C4 identity), IPv4 dotted-quad or compact IPv6 text.
+    created_ip: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    # fsp=6 renders DATETIME(6) in MySQL DDL (the generic DateTime(6) renders
+    # a bare DATETIME — see the v6 migration, same choice).
+    created_at: Mapped[datetime] = mapped_column(MySQLDateTime(fsp=6), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(MySQLDateTime(fsp=6), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(MySQLDateTime(fsp=6), nullable=False)
+
+    __table_args__ = (
+        Index("ix_sessions_user_id", "user_id"),
+        {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<Session {self.id_hash[:12]}… user={self.user_id}>"
+
+
+class LoginAttempt(Base):
+    """One normalized (username, ip) lockout counter row (auth plan C1.2).
+
+    ``username``/``ip`` are stored as submitted in v6 — the canonicalization
+    helper (lowercased username, compact IP text) lands with the S6 lockout
+    service, NOT here (schema-only slice). One row per pair via the
+    ``uq_login_attempts_pair`` unique key; ``attempts``/``lock_count`` carry
+    a SERVER default of 0 (proven independently of the Python defaults), the
+    timestamps are app-supplied, and ``locked_until`` is NULL = unlocked.
+
+    No FKs: this table names usernames (text), not user ids — deleting an
+    account never touches its lockout history. No ORM relationships.
+    InnoDB / utf8mb4.
+    """
+    __tablename__ = "login_attempts"
+
+    # Python ``_uuid`` default; NO server default (the app supplies the id it
+    # chooses when it wants to).
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    username: Mapped[str] = mapped_column(String(60), nullable=False)
+    ip: Mapped[str] = mapped_column(String(45), nullable=False)
+    attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0"))
+    first_failed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    last_failed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    lock_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0"))
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("username", "ip", name="uq_login_attempts_pair"),
+        Index("ix_login_attempts_locked", "locked_until"),
+        {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<LoginAttempt {self.username}@{self.ip} a={self.attempts}>"
+
+
+class AuthLock(Base):
+    """Named concurrency lock rows (auth plan C0.2, C5).
+
+    The table exists so the C5 guarded helpers (``create_first_admin`` /
+    ``modify_admin`` — later slices) have something to ``SELECT … FOR UPDATE``
+    when the guarded condition is about zero or one ``users`` rows. Exactly
+    two fixed seed rows (``first_admin``, ``last_admin``) are written by the
+    v6 migration — there is NO runtime re-seeding path (a missing lock row is
+    a loud failure, per C5, never a silent unlocked fallback). InnoDB / utf8mb4.
+    """
+    __tablename__ = "auth_locks"
+
+    name: Mapped[str] = mapped_column(String(40), primary_key=True)
+
+    __table_args__ = (
+        {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<AuthLock {self.name}>"
 
 
 class Recipe(Base):

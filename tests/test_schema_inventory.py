@@ -1,26 +1,30 @@
-"""Task 6.6 — full-chain schema verification (plan §Task 6, merge gate).
+"""Full-chain schema verification (Task 6.6 merge gate, extended by Task 7.1).
 
-The ONLY task that composes the whole ``v0 -> v1 -> v2 -> v3 -> v4 -> v5`` chain
-in ONE pristine database and asserts it as a regression test. It adds
-verification for EXISTING behavior only — no model/migration changes. Run
-against the ISOLATED test MariaDB (the dev stack and dev ``cookbook`` schema
-must remain untouched — plan shared contract). It is the proof the chain
+The ONLY task that composes the whole ``v0 -> v1 -> v2 -> v3 -> v4 -> v5 -> v6``
+chain in ONE pristine database and asserts it as a regression test. It adds
+verification for EXISTING behavior only — no model/migration changes of its
+own. Run against the ISOLATED test MariaDB (the dev stack and dev ``cookbook``
+schema must remain untouched — plan shared contract). It is the proof the chain
 composes, not just that each link passes on its own.
 
 Areas:
-  1. Exact base-table inventory (11 app tables + alembic_version) + the alembic
-     head, asserted separately (eleven, not ten — a previous draft said ten).
+  1. Exact base-table inventory (14 app tables + alembic_version) + the alembic
+     head, asserted separately (fourteen, not thirteen — v6 adds three auth
+     tables to the eleven v0–v5 tables).
   2. Alias RESTRICT guard, then a real parent DELETE: full recipe section/item
      CASCADE + both joins CASCADE + audit log SET NULL, while the alias's
      id/path survive and it re-points at one valid target.
   3. DL-4 seed stability (exactly the 8 locked rows, no "Others"/tag seeds)
      after the cross-table probe.
-  4. UUID/type invariant: every varchar(36) column in the schema is exactly the
-     locked UUID PK/FK set (discovered from information_schema so a newly-added
-     UUID column cannot be silently omitted), the two EXTERNAL ids are
-     varchar(64), the only char(64) in the schema is
-     migration_runs.file_sha256 (DL-5's single exception), and
-     alembic_version.version_num is NOT misclassified as a UUID.
+  4. UUID/type invariant (restructured by Task 7.1): discovery of ALL
+     application PK/FK keys is TYPE-INDEPENDENT (no varchar(36) filter, so a
+     UUID key that drifts off varchar(36) cannot hide), then compared to the
+     union of an explicit EXPECTED_UUID_KEYS set and an explicit
+     EXPECTED_NONUUID_KEYS set (Alembic's bookkeeping key excluded
+     explicitly); key TYPES are asserted separately from discovery (every
+     UUID key is varchar(36); the non-UUID PKs are their exact char(64)/
+     varchar(40) types); the char(64)/char(32)/external-id ledgers are
+     exact sets; and alembic_version.version_num is NOT misclassified.
 
 Disposal convention (same as test_aliases.py / test_migration_audit.py): the
 engine pool is process-global (lru_cache) and an asyncmy connection is bound to
@@ -68,8 +72,9 @@ SEED_ROWS = [
 BREAKFAST_ID = "412b94fd-8106-40b8-863b-46e2b1f1daff"
 FERMENTATION_ID = "26857e44-4786-4068-8faf-607d4a5a83a1"
 
-# EXACT application table inventory — ELEVEN tables (the previous draft said
-# ten; the live schema has eleven).
+# EXACT application table inventory — FOURTEEN tables. The v0–v5 chain
+# yields ELEVEN application tables; v6 (auth-plan S1) adds THREE (sessions,
+# login_attempts, auth_locks).
 APP_TABLES = {
     "users",                  # v0
     "recipes",                # v1
@@ -82,23 +87,29 @@ APP_TABLES = {
     "recipe_url_aliases",     # v4
     "migration_runs",         # v5
     "migration_recipe_log",   # v5
+    "sessions",               # v6
+    "login_attempts",         # v6
+    "auth_locks",             # v6
 }
 # Alembic ALSO creates this bookkeeping table; verified separately so the
-# "eleven application tables" assertion is not silently widened to twelve.
+# "fourteen application tables" assertion is not silently widened to fifteen.
 ALEMBIC_VERSION_TABLE = "alembic_version"
 EXPECTED_BASE_TABLES = APP_TABLES | {ALEMBIC_VERSION_TABLE}
 
-# Expected migration head after the full forward chain through v5.
-EXPECTED_HEAD = "b7a2f9c4d1e8"
+# Expected migration head after the full forward chain through v6.
+EXPECTED_HEAD = "e4c7a91d2f30"
 
 # --------------------------------------------------------------------------
-# Locked UUID PK/FK column set (explicit). The invariant test asserts exactly
-# these columns are varchar(36) and that every varchar(36) column found in the
-# live schema is one of these (the reverse inclusion catches a new UUID column
-# a future slice might add). ``version_num`` is intentionally EXCLUDED: it is
-# alembic's bookkeeping column, not an application UUID column.
+# Locked key sets (explicit). The invariant test discovers ALL application
+# PK/FK keys TYPE-INDEPENDENTLY (no varchar(36) filter, so a UUID key that
+# drifts off varchar(36) is still discovered and cannot hide), then compares
+# the discovered set to EXPECTED_UUID_KEYS ∪ EXPECTED_NONUUID_KEYS, with the
+# Alembic bookkeeping key EXCLUDED EXPLICITLY. Key types are then asserted
+# SEPARATELY from discovery (every UUID key is varchar(36); the non-UUID PKs
+# are their exact char(64)/varchar(40) types). ``version_num`` is explicitly
+# excluded: it is alembic's bookkeeping column, not an application key.
 # --------------------------------------------------------------------------
-EXPECTED_UUID_COLUMNS = {
+EXPECTED_UUID_KEYS = {
     ("users", "id"),
     ("recipes", "id"),
     ("recipes", "created_by"),
@@ -121,6 +132,18 @@ EXPECTED_UUID_COLUMNS = {
     ("migration_recipe_log", "id"),
     ("migration_recipe_log", "run_id"),
     ("migration_recipe_log", "recipe_id"),
+    # v6 — the only new key-bearing UUID columns (sessions.id_hash is a
+    # non-UUID char(64) PK, auth_locks.name a non-UUID varchar(40) PK; the
+    # uq_login_attempts_pair unique key is NOT a PK/FK so key discovery does
+    # not list it — it is asserted as a uniqueness contract in test_auth_schema).
+    ("sessions", "user_id"),
+    ("login_attempts", "id"),
+}
+# v6 non-UUID primary keys (the ONLY application keys that are not uuid
+# columns). Discovered alongside the UUID keys and asserted by exact type.
+EXPECTED_NONUUID_KEYS = {
+    ("sessions", "id_hash"),      # char(64) PK
+    ("auth_locks", "name"),       # varchar(40) PK
 }
 # External (non-UUID) identifiers that happen to be varchar(64). They reference
 # WordPress post ids, NOT application UUIDs.
@@ -128,8 +151,16 @@ EXTERNAL_ID_COLUMNS = {
     ("recipes", "source_id"),
     ("migration_recipe_log", "source_post_id"),
 }
-# The ONLY char(64) column in the schema (DL-5's fixed-length-hash exception).
-ONLY_CHAR64_COLUMN = ("migration_runs", "file_sha256")
+# EXACT char(64) ledger (DL-5's fixed-length-hash exception set): the ONLY
+# two char(64) columns in the schema (a NEW char(64) column is a failure).
+CHAR64_COLUMNS = {
+    ("migration_runs", "file_sha256"),
+    ("sessions", "id_hash"),
+}
+# EXACT char(32) ledger: the ONLY char(32) column in the schema.
+CHAR32_COLUMNS = {
+    ("sessions", "csrf_token"),
+}
 
 
 # --------------------------------------------------------------------------
@@ -199,26 +230,26 @@ async def _all_columns() -> list[tuple[str, str, str]]:
 
 
 def test_exact_base_table_inventory_and_alembic_head() -> None:
-    """The live BASE TABLE set is EXACTLY the eleven application tables PLUS
+    """The live BASE TABLE set is EXACTLY the fourteen application tables PLUS
     alembic_version — no extras (catches a stray migration_tag_log or later
     convenience table), no missing (catches a dropped slice). alembic_version
-    also contains EXACTLY the expected head (b7a2f9c4d1e8).
+    also contains EXACTLY the expected v6 head.
 
     The head is asserted separately from the table-inventory so that 'the
-    eleven application tables are present' and 'the migration is at the
+    fourteen application tables are present' and 'the migration is at the
     expected head' are independent proofs (the inventory test still would pass
-    on a partial chain where alembic_version exists but is not at b7a2f9c4d1e8).
+    on a partial chain where alembic_version exists but is not at the v6 head).
     """
     async def run() -> None:
         try:
             tables = await _base_tables()
             assert tables == EXPECTED_BASE_TABLES, (
-                f"BASE TABLE set must be EXACTLY the 11 app tables + alembic_version.\n"
+                f"BASE TABLE set must be EXACTLY the 14 app tables + alembic_version.\n"
                 f" missing : {sorted(EXPECTED_BASE_TABLES - tables)}\n"
                 f" extra   : {sorted(tables - EXPECTED_BASE_TABLES)}")
-            # eleven application tables only:
+            # the fourteen application tables only:
             assert tables - {ALEMBIC_VERSION_TABLE} == APP_TABLES, (
-                f"the eleven application tables must be EXACTLY this set (no extras "
+                f"the fourteen application tables must be EXACTLY this set (no extras "
                 f"beyond alembic_version).\n got: {sorted(tables)}")
 
             head = await _alembic_version_head()
@@ -277,23 +308,38 @@ def test_seed_rows_locked_and_no_others_or_tag_seeds() -> None:
 # ===========================================================================
 
 def test_uuid_and_char_type_invariants() -> None:
-    """Every varchar(36) column in the LIVE schema is in the explicit locked
-    UUID PK/FK set (reverse inclusion catches a new UUID column a future slice
-    might add that we did not enumerate). Every locked UUID column is
-    varchar(36) (forward inclusion catches a regression to the wrong type).
-    Also: recipes.source_id and migration_recipe_log.source_post_id are
-    varchar(64) (external identifiers, NOT UUIDs); the ONLY char(64) column in
-    the schema is migration_runs.file_sha256 (DL-5's single exception);
-    alembic_version.version_num is present in the live columns (so the invariant
-    test did NOT accidentally filter it out) but is NOT in the locked UUID set
-    (it is alembic's bookkeeping column, not an application UUID column)."""
+    """Key discovery is TYPE-INDEPENDENT (no varchar(36) filter): discover
+    ALL application PK/FK columns (constraint_name = 'PRIMARY' OR
+    referenced_table_name IS NOT NULL) — a UUID key that drifts off varchar(36)
+    is STILL discovered, so it cannot hide. Then exclude Alembic's
+    bookkeeping key EXPLICITLY, and require the discovered set to EQUAL
+    EXPECTED_UUID_KEYS ∪ EXPECTED_NONUUID_KEYS.
+
+    Types are asserted SEPARATELY from discovery (independent proofs):
+      (1) every locked UUID key column is varchar(36);
+      (2) the non-UUID PK key types are exactly char(64) [sessions.id_hash]
+          and varchar(40) [auth_locks.name];
+      (3) the two external ids are varchar(64) and NOT in the UUID key set;
+      (4) the EXACT char(64) ledger is {migration_runs.file_sha256,
+          sessions.id_hash} (a new char(64) column is a failure);
+      (5) the EXACT char(32) ledger is {sessions.csrf_token};
+      (6) alembic_version.version_num IS in the live schema (so the test did
+          not silently filter alembic out) but is NOT in the locked key sets
+          and NOT classified as varchar(36).
+
+    Every invariant is an EXACT-SET (reverse-inclusion) proof: a future slice
+    that adds a key of any kind, or a new char(64)/char(32)/varchar(64)
+    column, fails here — the test was restructured, not weakened.
+    """
     async def run() -> None:
         try:
             cols = await _all_columns()
             live = {(t, c): typ for t, c, typ in cols}
+            live_v36 = {tc for tc, typ in live.items() if typ == "varchar(36)"}
 
-            # Discover keys independently of column type: a new key with an
-            # incorrect width must not escape detection by a varchar filter.
+            # (0) Discover ALL application PK/FK keys — independently of
+            #     column type (a new key with an incorrect width must not
+            #     escape detection by a varchar filter).
             async with get_engine().connect() as conn:
                 keys = await conn.execute(text(
                     "SELECT DISTINCT table_name, column_name "
@@ -302,47 +348,70 @@ def test_uuid_and_char_type_invariants() -> None:
                     "AND (constraint_name = 'PRIMARY' "
                     "OR referenced_table_name IS NOT NULL)"))
                 key_columns = {tuple(row) for row in keys}
+
+            # EXPLICIT exclusion of the Alembic bookkeeping key (it is a PK
+            # but NOT an application key): discarded BEFORE the comparison.
+            assert (ALEMBIC_VERSION_TABLE, "version_num") in key_columns, (
+                "alembic_version.version_num must be DISCOVERED by the type-"
+                "independent key query (explicit exclusion, not filtered away)")
             key_columns.discard((ALEMBIC_VERSION_TABLE, "version_num"))
-            assert key_columns == EXPECTED_UUID_COLUMNS, (
-                f"UUID PK/FK set differs: {key_columns ^ EXPECTED_UUID_COLUMNS}")
+            expected_keys = EXPECTED_UUID_KEYS | EXPECTED_NONUUID_KEYS
+            assert key_columns == expected_keys, (
+                f"discovered application PK/FK key set must EQUAL the locked "
+                f"UUID + non-UUID key sets.\n"
+                f" discovered-only : {sorted(key_columns - expected_keys)}\n"
+                f" locked-only     : {sorted(expected_keys - key_columns)}")
 
-            # (1) every locked UUID column must exist and be varchar(36)
-            for tc in EXPECTED_UUID_COLUMNS:
-                assert tc in live, f"locked UUID column {tc} is missing"
+            # (1) TYPE assertion for every locked UUID key column (separate
+            #     proof from discovery): exactly varchar(36).
+            for tc in EXPECTED_UUID_KEYS:
+                assert tc in live, f"locked UUID key column {tc} is missing"
                 assert live[tc] == "varchar(36)", (
-                    f"locked UUID column {tc} must be varchar(36), got {live[tc]!r}")
+                    f"locked UUID key column {tc} must be varchar(36), "
+                    f"got {live[tc]!r}")
 
-            # (2) every live varchar(36) column must be a locked UUID column
-            #     (this catches a newly-added UUID column not in the locked set)
-            live_v36 = {tc for tc, typ in live.items() if typ == "varchar(36)"}
-            assert live_v36 == EXPECTED_UUID_COLUMNS, (
-                f"live varchar(36) column set must EQUAL the locked UUID set.\n"
-                f" live-only  (should be in the locked set): "
-                f"{sorted(live_v36 - EXPECTED_UUID_COLUMNS)}\n"
-                f" locked-only (should exist live)         : "
-                f"{sorted(EXPECTED_UUID_COLUMNS - live_v36)}")
+            # (2) EXACT types of the non-UUID PK key columns (char(64) and
+            #     varchar(40) respectively) — explicit, not 'absent from
+            #     the varchar(36) set'.
+            assert live[("sessions", "id_hash")] == "char(64)", (
+                f"sessions.id_hash must be char(64), got "
+                f"{live[('sessions', 'id_hash')]!r}")
+            assert live[("auth_locks", "name")] == "varchar(40)", (
+                f"auth_locks.name must be varchar(40), got "
+                f"{live[('auth_locks', 'name')]!r}")
+            # sanity: the non-UUID keys are NOT classified as UUID keys
+            assert not (EXPECTED_NONUUID_KEYS & EXPECTED_UUID_KEYS)
 
             # (3) the two external ids are varchar(64) (NOT UUIDs)
             for tc in EXTERNAL_ID_COLUMNS:
                 assert tc in live, f"external id column {tc} is missing"
                 assert live[tc] == "varchar(64)", (
                     f"external id {tc} must be varchar(64), got {live[tc]!r}")
-                assert tc not in EXPECTED_UUID_COLUMNS, (
-                    f"{tc} must NOT be in the locked UUID set (it is an external id)")
+                assert tc not in EXPECTED_UUID_KEYS, (
+                    f"{tc} must NOT be in the locked UUID key set (external id)")
 
-            # (4) the ONLY char(64) column in the schema is file_sha256
+            # (4) EXACT char(64) ledger (reverse inclusion: a NEW char(64)
+            #     column that is not one of these two fails)
             char64 = {tc for tc, typ in live.items() if typ == "char(64)"}
-            assert char64 == {ONLY_CHAR64_COLUMN}, (
-                f"the ONLY char(64) column must be {ONLY_CHAR64_COLUMN}; "
+            assert char64 == CHAR64_COLUMNS, (
+                f"the char(64) column set must be EXACTLY {sorted(CHAR64_COLUMNS)}; "
                 f"live char(64): {sorted(char64)}")
 
-            # (5) alembic_version.version_num IS present in the live schema
+            # (5) EXACT char(32) ledger
+            char32 = {tc for tc, typ in live.items() if typ == "char(32)"}
+            assert char32 == CHAR32_COLUMNS, (
+                f"the char(32) column set must be EXACTLY {sorted(CHAR32_COLUMNS)}; "
+                f"live char(32): {sorted(char32)}")
+
+            # (6) alembic_version.version_num IS present in the live schema
             #     (so the invariant test did not silently filter alembic out)
-            #     but is NOT in the locked set (it is not an application UUID).
+            #     but is NOT in the locked key set (it is not an application
+            #     key) and NOT classified as varchar(36).
             assert (ALEMBIC_VERSION_TABLE, "version_num") in live, (
                 "alembic_version.version_num must be discoverable in the live schema")
-            assert (ALEMBIC_VERSION_TABLE, "version_num") not in EXPECTED_UUID_COLUMNS, (
-                "version_num must NOT be treated as an application UUID column")
+            assert (ALEMBIC_VERSION_TABLE, "version_num") not in (
+                EXPECTED_UUID_KEYS | EXPECTED_NONUUID_KEYS), (
+                "version_num must NOT be treated as an application key column")
             assert (ALEMBIC_VERSION_TABLE, "version_num") not in live_v36, (
                 f"version_num ({live.get((ALEMBIC_VERSION_TABLE, 'version_num'))!r}) "
                 f"must NOT be classified as varchar(36)")
