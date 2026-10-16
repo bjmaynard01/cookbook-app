@@ -1,4 +1,4 @@
-# Cookbook project status — 2026-10-14
+# Cookbook project status — 2026-10-16
 
 This is the current cross-machine handoff. Read it before the older September
 `SESSION-HANDOFF` files, which describe completed foundation work. Confirm the
@@ -8,15 +8,18 @@ the branch/commit below are a snapshot, not a substitute for those commands.
 ## Repository and workflow
 
 - Remote: `https://github.com/bjmaynard01/cookbook-app.git`.
-- `main` HEAD: **Task 6.2 merged at `d65dcb3`** (v2 ordered body —
-  `recipe_sections` + `recipe_items`, DL-3). Task 6.1 recipes and its
-  data-model plan are already on `main` beneath it.
-- Task 6.3 organization was committed as `b99b333` on
-  `task/6.3-organization`. Codex independently verified 50 passing tests,
-  the fresh forward migration chain, and no schema drift. The owner approved
-  merging and pushing on 2026-10-14. Check live Git state for integration
-  status. The migration head is `a2b53a9f0000`; the next slice is Task 6.4
-  aliases.
+- `main` HEAD: the data-model chain is complete — Task 6.1 recipes,
+  6.2 ordered body (`recipe_sections` + `recipe_items`, DL-3), 6.3
+  organization, 6.4 `recipe_url_aliases`, and the v5 migration-audit + full
+  chain-verification probes are all on `main` (see `git log --oneline`;
+  snapshot `57d252d`, migration head `b7a2f9c4d1e8`). Confirm live Git state
+  with `git log -5 --oneline` before acting. The data-model plan is **closed**.
+- Next plan drafted (2026-10-16): **authentication** —
+  `docs/superpowers/plans/2026-10-16-authentication.md`. It is a first draft
+  (requirements, ordered slices, acceptance, dependencies, unresolved O7/O8)
+  and has **not** been owner-approved. No auth code exists yet: no `sessions`
+  / `login_attempts` tables, no auth routes, no CLI entry point. It is the
+  "auth plan" the data-model plan deferred.
 - The owner and project manager make design and merge decisions jointly. A
   fresh-session local model implements on dedicated task branches; Codex
   reviews; the owner approves merges. Do not auto-prompt, push, or merge task
@@ -26,15 +29,20 @@ the branch/commit below are a snapshot, not a substitute for those commands.
 
 - FastAPI foundation with `/healthz` and `/readyz`, configuration including
   file-first secrets, Docker image, dev Compose app and MariaDB, and Alembic.
-- v0 `users`, v1 `recipes`, and v2 `recipe_sections` + `recipe_items`
-  migrations and ORM models (v2 = Task 6.2, now merged at `d65dcb3`). `Recipe`
-  includes `UNIQUE(source_system, source_id)` for importer idempotency.
-- Tests for configuration, app health, users, recipes, and the ordered body.
-  No recipe CRUD/API, reader UI, authentication, import, or the Task 6.4 /
-  6.5 / 6.6 tables yet.
+- v0–v5 migrations and matching ORM models: `users`, `recipes`, ordered body
+  (`recipe_sections` + `recipe_items`), organization (`categories`/`tags` +
+  joins, DL-4 seed), `recipe_url_aliases` (exactly-one-target CHECK), and the
+  v5 migration-audit tables. `Recipe` includes
+  `UNIQUE(source_system, source_id)` for importer idempotency. Migration head
+  is `b7a2f9c4d1e8` (v5).
+- Tests for configuration, app health, users, recipes, the ordered body,
+  organization, aliases, and the full schema/cascade/seed probe set.
+  No recipe CRUD/API, reader UI, search, authentication, or import yet.
 - Approved design spec:
-  `docs/superpowers/specs/2026-09-20-cookbook-design.md`. Task 6 plan:
-  `docs/superpowers/plans/2026-10-03-data-model.md`.
+  `docs/superpowers/specs/2026-09-20-cookbook-design.md`. Plans:
+  `docs/superpowers/plans/2026-10-03-data-model.md` (complete) and
+  `docs/superpowers/plans/2026-10-16-authentication.md` (first draft, pending
+  owner approval).
 
 ## Decisions and next work
 
@@ -54,16 +62,17 @@ the branch/commit below are a snapshot, not a substitute for those commands.
   `recipe_tags.tag_id`.
 - O6 is now **resolved** by DL-7 (was: "decide whether deleting an in-use tag
   is blocked or drops its recipe memberships").
-- **Next work:** Task 6.3 organization (on `task/6.3-organization`, pending
-  Codex review) implements the `categories` / `tags` + join tables + DL-4 seed
-  against the DL-7 rule above. After it is reviewed and merged, proceed to
-  Task 6.4 aliases, 6.5 migration audit, and 6.6 chain verification, with
-  owner review at each merge gate.
+- **Next work:** the data-model plan (Tasks 6.1–6.6) is complete and on
+  `main`. The next active plan is **authentication**
+  (`docs/superpowers/plans/2026-10-16-authentication.md`), drafted 2026-10-16
+  and awaiting owner approval before any slice is implemented. It carries two
+  open owner decisions (O7 proxy CIDR value, O8 argon2id params at/above
+  minimum). Implementation runs on task branches; owner approves each merge.
 - The alias CHECK and RESTRICT behavior was probed on disposable MariaDB 11
   on 2026-10-11: one-target rows inserted, zero/two-target rows failed the
   CHECK, referenced-target deletes failed, and reassignment allowed the old
-  recipe's deletion while retaining the alias. Task 6.4 must still test its
-  actual Alembic migration and ORM mapping against isolated MariaDB.
+  recipe's deletion while retaining the alias. Task 6.4 shipped with the
+  migration + ORM mapping tested against isolated MariaDB.
 
 ## Moving to desktop or cloud
 
