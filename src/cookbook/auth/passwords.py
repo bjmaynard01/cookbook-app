@@ -44,7 +44,7 @@ Dummy path:
 """
 from __future__ import annotations
 
-from argon2 import PasswordHasher, Type
+from argon2 import PasswordHasher, Type, extract_parameters
 from argon2 import exceptions as argon2_exc
 
 # O-f minimum length, in Python ``str`` code points. No complexity rules.
@@ -115,18 +115,48 @@ def verify_password(plain: str, stored_hash: str) -> bool:
     :data:`MINIMUM_LENGTH` was introduced (and shorter than it) still
     verifies against its existing hash here.
     """
+    # Exception classification (argon2-cffi 25.1.0). The library raises:
+    #   * VerifyMismatchError            — candidate did not match (a genuine
+    #                                       authentication failure) -> False.
+    #   * InvalidHashError (a ValueError,
+    #                                       NOT an Argon2Error) — clearly
+    #                                       malformed stored hash -> False.
+    #   * UnsupportedParametersError     — stored hash parameters this platform
+    #                                       cannot honor (bad stored data)
+    #                                       -> False.
+    #   * VerificationError (the *generic* parent of VerifyMismatchError) —
+    #     the library CONFLATES two very different outcomes under this one
+    #     class: (a) a recognized-prefix-but-malformed body ("Decoding
+    #     failed"), and (b) an operational failure on a structurally-valid
+    #     hash ("Memory cost is too small"). We must NOT blanket-catch it,
+    #     or we would disguise a real resource failure as a normal
+    #     wrong-password. Instead we discriminate by structural validity.
+    # MemoryError / RuntimeError from the C layer are intentionally never
+    # caught and propagate.
     try:
-        # argon2-cffi ``verify`` takes (stored_hash, password) and returns
-        # ``True`` on a match; it raises on mismatch or validation.
         _hasher.verify(stored_hash, plain)
         return True
-    except (argon2_exc.Argon2Error, argon2_exc.InvalidHashError,
-            argon2_exc.UnsupportedParametersError):
-        # Documented argon2 validation/verification failures: wrong password
-        # (Argon2Error branch), malformed or unsupported stored hash
-        # (InvalidHashError / UnsupportedParametersError). Fold into a clean
-        # "no" without echoing any password or hash value.
+    except argon2_exc.VerifyMismatchError:
+        # Genuine mismatch — a normal "no", never a leak of any password or
+        # hash value.
         return False
+    except (argon2_exc.InvalidHashError, argon2_exc.UnsupportedParametersError):
+        # Stored hash is malformed, or its parameters are not supported on
+        # this platform: bad stored data -> a normal "no".
+        return False
+    except argon2_exc.VerificationError:
+        # Conflated case. ``extract_parameters`` (a documented library
+        # primitive) returns the parsed parameters for a well-formed hash and
+        # raises InvalidHashError for a malformed one, which lets us cleanly
+        # separate "bad stored data" (-> False) from "operational failure"
+        # (-> re-raise). A successful parse proves the hash is structurally
+        # valid, so the VerificationError must have come from actually
+        # performing verification work.
+        try:
+            extract_parameters(stored_hash)
+        except argon2_exc.InvalidHashError:
+            return False
+        raise  # structurally valid hash -> operational failure: surface it
 
 
 def dummy_verify(plain: str) -> None:
@@ -144,11 +174,26 @@ def dummy_verify(plain: str) -> None:
     constant) verification cost without a cheap unknown-user path that a
     timing attack could use for username enumeration.
     """
+    # The committed DUMMY_HASH is controlled application data we know to be
+    # well-formed and structurally valid, so the ONLY normal failure mode here
+    # is a genuine candidate mismatch. Catch exactly that one class
+    # (VerifyMismatchError) and discard the result: dummy_verify authenticates
+    # no one and reports no outcome.
+    #
+    # Deliberately do NOT catch the broader Argon2Error family, the generic
+    # VerificationError, or InvalidHashError / UnsupportedParametersError:
+    # because DUMMY_HASH is our own (not attacker-supplied) constant, any of
+    # those reaching this point indicates a real environmental or data-integrity
+    # problem — a malformed/unsupported dummy hash, or an operational
+    # verification failure (VerificationError "Memory …", MemoryError,
+    # RuntimeError) — and must propagate to a caller rather than be mistaken
+    # for a benign unknown-user login attempt.
     try:
         _hasher.verify(DUMMY_HASH, plain)
-    except (argon2_exc.Argon2Error, argon2_exc.InvalidHashError,
-            argon2_exc.UnsupportedParametersError):
-        # Match or mismatch is irrelevant here — the outcome is always
-        # discarded. Only programming / resource errors are not caught.
-        pass
+    except argon2_exc.VerifyMismatchError:
+        # Normal outcome for a non-matching candidate on a valid dummy hash;
+        # discard it. A successful match (library returning True) is also
+        # simply discarded — either way dummy_verify returns None and
+        # authenticates nothing.
+        return None
     return None

@@ -59,6 +59,21 @@ def _install_spy(monkeypatch: pytest.MonkeyPatch, verify_fn) -> None:
     monkeypatch.setattr(pw, "_hasher", _FakeHasher(verify_fn))
 
 
+def _valid_stored_hash() -> str:
+    """A structurally valid argon2id hash (low params, cheap for tests).
+
+    ``argon2.extract_parameters`` accepts it, so the service's structural
+    pre-check passes and the test reaches the verifier (real or faked). This
+    is deliberately structurally *valid* so the only distinguishing factor in
+    the operational-failure tests below is the exception the verifier raises
+    — not a malformed-hash short-circuit.
+    """
+    return PasswordHasher(
+        time_cost=1, memory_cost=8192, parallelism=1,
+        hash_len=32, salt_len=16, type=Type.ID,
+    ).hash("dummy-plaintext-for-test")
+
+
 # --- O-f policy: minimum 8 characters, no complexity rules ------------------
 
 @pytest.mark.parametrize("candidate", ["", "a", "seven77", "1234567", "    123"])
@@ -171,6 +186,115 @@ def test_malformed_stored_hashes_fail_safely() -> None:
         assert pw.verify_password(plain, bad) is False, repr(bad)
 
 
+# --- regression: operational verification failures must propagate -------------
+#
+# The library's VerificationError family conflates a few distinct outcomes:
+# "Decoding failed" (stored hash is actually malformed, but its recognized
+# prefix let it past structural validation) and genuine resource-level
+# verification failures both surface as VerificationError. The service must
+# not flatten that into an authentication failure. The regression tests
+# below lock down that distinction.
+
+def test_operational_verification_error_propagates_from_verify_password(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Simulates the library failing for an operational reason (e.g. memory
+    # allocation) — VerificationError, NOT VerificationError's mismatch
+    # subclass. This must not be masked as a password mismatch.
+    def operational_verify(stored_hash: str, candidate: str) -> bool:
+        raise argon2_exc.VerificationError("Memory allocation error")
+
+    _install_spy(monkeypatch, operational_verify)
+    # Structurally valid stored hash so the test isolates the verifier's
+    # operational failure, not a malformed-hash short-circuit.
+    with pytest.raises(argon2_exc.VerificationError,
+                       match="Memory allocation error"):
+        pw.verify_password("candidate", _valid_stored_hash())
+
+
+def test_operational_verification_error_propagates_from_dummy_verify(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def operational_verify(stored_hash: str, candidate: str) -> bool:
+        raise argon2_exc.VerificationError("Memory allocation error")
+
+    _install_spy(monkeypatch, operational_verify)
+    with pytest.raises(argon2_exc.VerificationError,
+                       match="Memory allocation error"):
+        pw.dummy_verify("candidate")
+
+
+def test_memory_error_propagates_from_verify_password(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def verify_that_raises(stored_hash: str, candidate: str) -> bool:
+        raise MemoryError("could not allocate verification buffer")
+
+    _install_spy(monkeypatch, verify_that_raises)
+    with pytest.raises(MemoryError):
+        pw.verify_password("candidate", "$argon2id$v=19$m=19456,t=2,p=1$salt$tag")
+
+
+def test_memory_error_propagates_from_dummy_verify(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def verify_that_raises(stored_hash: str, candidate: str) -> bool:
+        raise MemoryError("could not allocate dummy buffer")
+
+    _install_spy(monkeypatch, verify_that_raises)
+    with pytest.raises(MemoryError):
+        pw.dummy_verify("candidate")
+
+
+def test_runtime_error_propagates_from_verify_password(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def verify_that_raises(stored_hash: str, candidate: str) -> bool:
+        raise RuntimeError("libargon2 internal failure")
+
+    _install_spy(monkeypatch, verify_that_raises)
+    with pytest.raises(RuntimeError):
+        pw.verify_password("candidate", "$argon2id$v=19$m=19456,t=2,p=1$salt$tag")
+
+
+def test_runtime_error_propagates_from_dummy_verify(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def verify_that_raises(stored_hash: str, candidate: str) -> bool:
+        raise RuntimeError("libargon2 internal failure")
+
+    _install_spy(monkeypatch, verify_that_raises)
+    with pytest.raises(RuntimeError):
+        pw.dummy_verify("candidate")
+
+
+def test_wrong_password_still_returns_false_not_exception(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Locks down the distinction the fix above preserves: a real mismatch
+    # (VerifyMismatchError, a VerificationError subclass) must STILL be
+    # folded into a clean "no", not propagated.
+    def mismatch_verify(stored_hash: str, candidate: str) -> bool:
+        raise argon2_exc.VerifyMismatchError("password does not match hash")
+
+    _install_spy(monkeypatch, mismatch_verify)
+    assert pw.verify_password("candidate", _valid_stored_hash()) is False
+
+
+def test_malformed_stored_hashes_still_return_false_after_fix(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # After the narrow-catch change, structurally invalid stored hashes
+    # (InvalidHashError — NOT an Argon2Error at all) must still fold to a
+    # clean "no" rather than escaping the service.
+    def structural_fail_verify(stored: str, candidate: str) -> bool:
+        raise argon2_exc.InvalidHashError("structural validation failed")
+
+    _install_spy(monkeypatch, structural_fail_verify)
+    assert pw.verify_password("candidate", "not-a-hash") is False
+    assert pw.verify_password("candidate", "$argon2b$v=99$garbage") is False
+
+
 def test_no_password_or_hash_in_logs_or_errors(caplog: pytest.LogCaptureFixture) -> None:
     password = "caplog-secret-77"
     stored = pw.hash_password(password)
@@ -226,15 +350,73 @@ def test_dummy_hash_is_valid_for_the_configured_hasher() -> None:
     # Guarding the committed constant: it must be a well-formed argon2id hash
     # the configured hasher will fully process (so the unknown-user path does
     # full argon2id work). We do not know the pre-generated plaintext, so a
-    # mismatch at verify time is the normal, expected outcome; a structural
-    # InvalidHashError would mean the constant is corrupt.
+    # VerifyMismatchError at verify time is the normal, expected outcome —
+    # proving real verification work ran. Anything else (structural
+    # InvalidHashError, operational VerificationError) means the constant is
+    # corrupt or the library is failing, and must NOT be swallowed.
     assert "$argon2id$" in pw.DUMMY_HASH
     try:
         pw._hasher.verify(pw.DUMMY_HASH, "any-candidate")
-    except argon2_exc.Argon2Error:
+    except argon2_exc.VerifyMismatchError:
         pass  # mismatch is the normal outcome — the real work still ran
-    except argon2_exc.InvalidHashError:
-        raise AssertionError("committed DUMMY_HASH is malformed")
+    except argon2_exc.InvalidHashError as exc:
+        raise AssertionError("committed DUMMY_HASH is malformed") from exc
+
+
+def test_dummy_hash_parameters_match_approved_policy() -> None:
+    # The committed dummy hash must carry the exact approved argon2id
+    # settings, proven by the library's own parameter extractor (not just a
+    # string prefix check).
+    params = argon2.extract_parameters(pw.DUMMY_HASH)
+    assert params.type is Type.ID
+    assert params.version == 19
+    assert params.memory_cost == 19456  # 19 MiB, in KiB units
+    assert params.time_cost == 2
+    assert params.parallelism == 1
+    assert params.hash_len == 32
+    assert params.salt_len == 16
+
+
+def test_dummy_verify_raises_specifically_on_real_nonmatching_candidate() -> None:
+    # With the real hasher and the real committed DUMMY_HASH, a candidate
+    # verification must surface as the library's specific VerifyMismatchError
+    # (and nothing broader). This proves the committed constant performs full
+    # argon2id verification work and that the outcome is a genuine mismatch,
+    # not a masked operational or structural failure.
+    with pytest.raises(argon2_exc.VerifyMismatchError):
+        pw._hasher.verify(pw.DUMMY_HASH, "nonmatching-candidate-9x")
+
+
+def test_fake_dummy_hash_operational_error_propagates(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Controlled-application-data rule: the dummy hash is ours, so an
+    # operational VerificationError from that path is a real failure, not an
+    # authentication outcome, and must not be swallowed.
+    def operational_verify(stored_hash: str, candidate: str) -> bool:
+        raise argon2_exc.VerificationError("Memory allocation error")
+
+    _install_spy(monkeypatch, operational_verify)
+    with pytest.raises(argon2_exc.VerificationError,
+                       match="Memory allocation error"):
+        pw.dummy_verify("candidate")
+
+
+def test_fake_dummy_hash_unsupported_parameter_propagates(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # UnsupportedParametersError (e.g. platform constraints) is a ValueError,
+    # not an Argon2Error — it must also propagate from the dummy path rather
+    # than be treated as "no match".
+    def unsupported_verify(stored_hash: str, candidate: str) -> bool:
+        raise argon2_exc.UnsupportedParametersError(
+            "parameters unsupported on this platform"
+        )
+
+    _install_spy(monkeypatch, unsupported_verify)
+    with pytest.raises(argon2_exc.UnsupportedParametersError,
+                       match="unsupported on this platform"):
+        pw.dummy_verify("candidate")
 
 
 def test_known_user_failure_performs_exactly_one_verify_call(
