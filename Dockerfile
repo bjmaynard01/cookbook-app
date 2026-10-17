@@ -43,4 +43,7 @@ EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=6 \
   CMD python -c "import httpx,sys; r=httpx.get('http://127.0.0.1:8000/readyz', timeout=5); sys.exit(0 if r.status_code==200 else 1)" || exit 1
 ENTRYPOINT ["./bin/docker-entrypoint.sh"]
-CMD ["uvicorn", "cookbook.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+# --no-proxy-headers: the app owns forwarded-header interpretation
+# (client_identity, TRUSTED_PROXY_CIDRS). Disabling uvicorn's own proxy
+# handling avoids double processing / peer rewriting (auth plan C4).
+CMD ["uvicorn", "cookbook.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]

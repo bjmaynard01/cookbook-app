@@ -189,3 +189,21 @@ def test_readyz_dependency_failure(
     follow = client.get("/healthz")
     assert follow.status_code == 200
     assert follow.json()["status"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Launch wiring: the app is the single owner of forwarded-header processing.
+# ---------------------------------------------------------------------------
+def test_dockerfile_disables_uvicorn_proxy_headers() -> None:
+    # C4: the app (client_identity) owns forwarded-header interpretation, so the
+    # container must launch uvicorn with --no-proxy-headers to avoid double
+    # processing. Guarding the CMD text is this slice's launch-wiring contract.
+    from pathlib import Path
+
+    dockerfile = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text(encoding="utf-8")
+    cmd_line = next(
+        line for line in dockerfile.splitlines() if line.strip().startswith("CMD [")
+    )
+    assert "--no-proxy-headers" in cmd_line
+    # And the app must not re-enable it elsewhere in the launch path.
+    assert "--forwarded-allow-ips" not in cmd_line

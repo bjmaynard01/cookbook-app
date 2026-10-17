@@ -4,14 +4,23 @@ File-first secrets (spec D20): each secret reads the ``*_FILE`` env var first
 (first line, trailing newline stripped), falling back to the plain env var.
 The DB connection URL is assembled from DB_* parts — dev and prod (existing
 MariaDB) share this exact code path; only .env values differ.
+
+Trusted-proxy and cookie-secure settings (auth plan C4/C3):
+``TRUSTED_PROXY_CIDRS`` is the comma-separated list of networks whose
+*direct TCP peers* may supply X-Forwarded-For/X-Forwarded-Proto; it is
+validated and parsed once at settings load so a malformed non-empty value
+fails at startup instead of being silently treated as "trust all".
+``COOKIE_SECURE`` is an explicit true/false override; unset (or blank)
+means "follow the effective request scheme".
 """
 from __future__ import annotations
 
+import ipaddress
 import os
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -49,6 +58,45 @@ class Settings(BaseSettings):
     # --- media ---
     media_dir: Path = Field(default=Path("/media"), alias="MEDIA_DIR")
     upload_max_bytes: int = Field(default=10 * 1024 * 1024, alias="UPLOAD_MAX_BYTES")
+
+    # --- trusted proxy / cookie security (auth S2) ---
+    trusted_proxy_cidrs: str = Field(default="", alias="TRUSTED_PROXY_CIDRS")
+    cookie_secure: bool | None = Field(default=None, alias="COOKIE_SECURE")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_cookie_secure(cls, data: object) -> object:
+        # A blank COOKIE_SECURE (an empty .env line) means "unset": follow the
+        # effective request scheme. pydantic's own bool parsing rejects blank
+        # strings, so normalize to None instead of failing the whole load.
+        if isinstance(data, dict):
+            for key in ("COOKIE_SECURE", "cookie_secure"):
+                value = data.get(key)
+                if isinstance(value, str) and not value.strip():
+                    data[key] = None
+        return data
+
+    @model_validator(mode="after")
+    def _parse_trusted_cidrs(self) -> Settings:
+        # Parse once, at boot: a malformed non-empty value raises here so the
+        # app fails startup loudly (never silently "trust all"). Unset/blank/
+        # all-blank values are a valid "no trusted peers" configuration.
+        raw = self.trusted_proxy_cidrs.strip()
+        networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+        if raw:
+            for piece in raw.split(","):
+                piece = piece.strip()
+                if piece:
+                    try:
+                        # strict=False: "10.0.0.1" (no /prefix) is accepted as
+                        # a /32; host bits are normalized away.
+                        networks.append(ipaddress.ip_network(piece, strict=False))
+                    except ValueError:
+                        raise ValueError(
+                            f"TRUSTED_PROXY_CIDRS: {piece!r} is not a valid IPv4/IPv6 CIDR"
+                        ) from None
+        self._trusted_nets = networks
+        return self
 
     @property
     def database_url(self) -> str:

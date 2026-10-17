@@ -44,6 +44,30 @@ variables, run `.venv/bin/alembic upgrade head`, `.venv/bin/alembic check`, and
 `.venv/bin/pytest -q`. The latest verified result is recorded in the project
 status file. Do not commit `.env` or test credentials.
 
+## Launch and trusted proxies
+
+The application owns the interpretation of `X-Forwarded-For` and
+`X-Forwarded-Proto` (see `src/cookbook/auth/identity.py`). It only honors
+those headers when the request's **direct TCP peer** falls inside
+`TRUSTED_PROXY_CIDRS`; from any other peer the forwarded headers are ignored
+and the direct peer is used as the client identity.
+
+- Set `TRUSTED_PROXY_CIDRS` to the CIDR(s) of the box's *actual* trusted
+  reverse proxy only — for example the docker network range the proxy
+  connects from, or a single address such as `172.17.0.1/32`. Do **not**
+  add your LAN or the whole world; a peer outside the list cannot use
+  forwarded headers, and the direct peer becomes identity.
+  Leave it empty when running without a reverse proxy.
+- Launch uvicorn with `--no-proxy-headers` so uvicorn does not rewrite the
+  peer or interpret these headers before the app does (the Dockerfile's
+  `CMD` already includes it). For direct local runs:
+  `uvicorn cookbook.app:create_app --factory --host 127.0.0.1 --port 8000 --no-proxy-headers`.
+- The app does **not** guess the external scheme at startup — the effective
+  scheme comes from the request (the trusted peer's `X-Forwarded-Proto`
+  when set). `COOKIE_SECURE` unset follows that effective scheme; an
+  explicit `true`/`false` overrides it (see the `.env.example` comment:
+  `false` on HTTPS is a deliberate weakening).
+
 ## Deployment boundary
 
 `docker-compose.yml` is a two-service **development** configuration: it starts
