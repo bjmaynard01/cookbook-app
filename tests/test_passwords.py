@@ -186,6 +186,62 @@ def test_malformed_stored_hashes_fail_safely() -> None:
         assert pw.verify_password(plain, bad) is False, repr(bad)
 
 
+def test_malformed_decodable_hash_returns_false_not_decoding_error() -> None:
+    # Codex 7.3 regression (HEAD 05771ea, argon2-cffi 25.1.0): this exact
+    # stored hash is a recognized argon2id string with valid segment COUNT and
+    # valid segment LENGTHS (its non-base64 "!-fill" still decodes to exactly
+    # the required salt_len=24 and hash_len=24), so argon2.extract_parameters
+    # ACCEPTS it. The C verifier then rejects it with the library's
+    # VerificationError "Decoding failed". That malformed stored hash must
+    # fold to a clean False; the previous extract_parameters pre-check passed
+    # and re-raised instead. (Real library path, no spy.)
+    bad = ("$argon2id$v=19$m=19456,t=2,p=1$"
+           + "!" * 32 + "$" + "!" * 32)
+    assert pw.verify_password("candidate", bad) is False
+
+
+@pytest.mark.parametrize("message", [
+    "Decoding failed",          # bad base64 in salt or tag (the Codex case)
+    "Output is too short",     # tag shorter than the encoded hash length
+    "Salt is too short",        # zero-byte / undersized salt
+    "Memory cost is too small",  # m below the lib's floor
+    "Time cost is too small",    # t below the lib's floor
+    "Too few lanes",             # p below the lib's floor
+])
+def test_known_malformed_verification_error_messages_return_false(
+    monkeypatch: pytest.MonkeyPatch, message: str
+) -> None:
+    # Full set of "stored hash the C library refuses" VerificationError
+    # messages the installed argon2-cffi emits (probed against low_level
+    # directly). Each must fold to a clean False — they describe malformed
+    # *stored data*, never a genuine operational failure.
+    def decoding_fail_verify(stored: str, candidate: str) -> bool:
+        raise argon2_exc.VerificationError(message)
+
+    _install_spy(monkeypatch, decoding_fail_verify)
+    assert pw.verify_password("candidate", "not-a-real-hash") is False
+
+
+def test_memory_cost_too_small_is_not_confused_with_memory_allocation_error(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Locks the ordering the discrimination depends on: "Memory cost is too
+    # small" (a malformed/unsupported stored hash) folds to False, while the
+    # near-identical operational message "Memory allocation error" must still
+    # propagate. The two are told apart exactly, without substring matching.
+    def cost_too_small_verify(stored: str, candidate: str) -> bool:
+        raise argon2_exc.VerificationError("Memory cost is too small")
+    _install_spy(monkeypatch, cost_too_small_verify)
+    assert pw.verify_password("candidate", "any-stored-hash") is False
+
+    def allocation_error_verify(stored: str, candidate: str) -> bool:
+        raise argon2_exc.VerificationError("Memory allocation error")
+    _install_spy(monkeypatch, allocation_error_verify)
+    with pytest.raises(argon2_exc.VerificationError,
+                       match="Memory allocation error"):
+        pw.verify_password("candidate", "any-stored-hash")
+
+
 # --- regression: operational verification failures must propagate -------------
 #
 # The library's VerificationError family conflates a few distinct outcomes:

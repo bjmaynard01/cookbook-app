@@ -44,7 +44,7 @@ Dummy path:
 """
 from __future__ import annotations
 
-from argon2 import PasswordHasher, Type, extract_parameters
+from argon2 import PasswordHasher, Type
 from argon2 import exceptions as argon2_exc
 
 # O-f minimum length, in Python ``str`` code points. No complexity rules.
@@ -66,6 +66,34 @@ _hasher = PasswordHasher(
     hash_len=32,         # 256-bit hash
     salt_len=16,         # 128-bit salt, generated securely per hash
 )
+
+# The argon2-cffi C verifier raises the SAME ``VerificationError`` class for
+# every non-OK / non-mismatch outcome (see ``argon2.low_level.verify_secret``),
+# differing only in the library-provided message (``error_to_str(rv)``). That
+# message is therefore the only signal that separates the two very different
+# outcomes the service must treat differently:
+#
+#   * "stored-hash is bad" — the encoded bytes/parameters could not be
+#     decoded or fall below the library's floors. These describe attacker-
+#     or corrupt-supplied STORED DATA, not a system fault, so they are a
+#     normal authentication "no" -> ``False``.
+#   * an OPERATIONAL failure that happened while doing legitimate work — the
+#     canonical one being "Memory allocation error" (allocation of the
+#     working buffer failed at verify time). These MUST propagate so a real
+#     resource/exhaustion fault is surfaced, not masked as a wrong password.
+#
+# The malformed-stored-data set below is NOT a custom parser: it is the exact
+# set of error_message strings the installed argon2-cffi emits for the
+# "this stored hash is bad" outcomes (probed against the real C verifier).
+# Any message outside this set is treated as operational and re-raised.
+_MALFORMED_STORED_HASH_MESSAGES = frozenset({
+    "Decoding failed",          # salt or tag not valid base64 / wrong length
+    "Output is too short",     # encoded tag shorter than the hash bytes
+    "Salt is too short",        # zero-byte / undersized salt
+    "Memory cost is too small",  # m below the library's floor (bad stored data)
+    "Time cost is too small",    # t below the library's floor
+    "Too few lanes",             # p below the library's floor
+})
 
 # Committed non-secret dummy hash (Argon2id, same parameters as above).
 # Pre-generated once at development time rather than computed on import or
@@ -127,10 +155,16 @@ def verify_password(plain: str, stored_hash: str) -> bool:
     #   * VerificationError (the *generic* parent of VerifyMismatchError) —
     #     the library CONFLATES two very different outcomes under this one
     #     class: (a) a recognized-prefix-but-malformed body ("Decoding
-    #     failed"), and (b) an operational failure on a structurally-valid
-    #     hash ("Memory cost is too small"). We must NOT blanket-catch it,
-    #     or we would disguise a real resource failure as a normal
-    #     wrong-password. Instead we discriminate by structural validity.
+    #     failed"), and (b) an operational failure ("Memory allocation
+    #     error"). We must NOT blanket-catch it, or we would disguise a real
+    #     resource failure as a normal wrong-password. Note the prior
+    #     attempt to split these via extract_parameters was insufficient: that
+    #     primitive validates only segment count and the *decoded byte LENGTH*
+    #     of salt/tag, not their base64 *content*, so a structurally-valid,
+    #     content-malformed hash (e.g. '!'-fill) passed it and got re-raised.
+    #     We instead discriminate on the library's own error MESSAGE (see
+    #     _MALFORMED_STORED_HASH_MESSAGES): the fixed set of "bad stored data"
+    #     messages -> False, any other message is operational -> re-raise.
     # MemoryError / RuntimeError from the C layer are intentionally never
     # caught and propagate.
     try:
@@ -144,19 +178,15 @@ def verify_password(plain: str, stored_hash: str) -> bool:
         # Stored hash is malformed, or its parameters are not supported on
         # this platform: bad stored data -> a normal "no".
         return False
-    except argon2_exc.VerificationError:
-        # Conflated case. ``extract_parameters`` (a documented library
-        # primitive) returns the parsed parameters for a well-formed hash and
-        # raises InvalidHashError for a malformed one, which lets us cleanly
-        # separate "bad stored data" (-> False) from "operational failure"
-        # (-> re-raise). A successful parse proves the hash is structurally
-        # valid, so the VerificationError must have come from actually
-        # performing verification work.
-        try:
-            extract_parameters(stored_hash)
-        except argon2_exc.InvalidHashError:
+    except argon2_exc.VerificationError as exc:
+        # Conflated case, split by the library's own error message (the C
+        # verifier raises the same VerificationError class for both decode
+        # failures and operational failures, differing only in message).
+        # A recognized "bad stored data" message means the *stored hash* is
+        # the problem -> a normal "no".
+        if exc.args and exc.args[0] in _MALFORMED_STORED_HASH_MESSAGES:
             return False
-        raise  # structurally valid hash -> operational failure: surface it
+        raise  # any other message is a genuine operational failure: surface it
 
 
 def dummy_verify(plain: str) -> None:
