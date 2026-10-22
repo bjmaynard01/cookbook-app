@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from . import __version__
+from .auth import routes as auth_routes
 from .config import get_settings
 from .db import get_engine
 
@@ -67,4 +68,7 @@ def create_app() -> FastAPI:
         return body
 
     app.state.settings = settings
+    # Task 7.5: auth routes read app.state.settings at request time, so the
+    # assignment above just needs to hold before the first request lands.
+    app.include_router(auth_routes.router)
     return app

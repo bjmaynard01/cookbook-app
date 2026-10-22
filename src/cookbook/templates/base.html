@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Cookbook{% endblock %}</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: system-ui, sans-serif; background: #faf9f7; color: #2b2b2b; line-height: 1.5; }
+        .container { max-width: 640px; margin: 0 auto; padding: 1.5rem; }
+        header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1rem; }
+        h1 { font-size: 1.5rem; margin: 0; }
+        a { color: #7a4f1d; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        label { display: block; margin-bottom: 0.25rem; font-weight: 600; }
+        input { width: 100%; padding: 0.5rem 0.6rem; border: 1px solid #ccc; border-radius: 6px; font: inherit; margin-bottom: 1rem; }
+        button { background: #7a4f1d; color: #fff; border: 0; padding: 0.6rem 1rem; border-radius: 6px; cursor: pointer; font: inherit; }
+        button:hover { background: #5e3b13; }
+        .alert { background: #fdecec; color: #a12d2d; border: 1px solid #f0c2c2; border-radius: 6px; padding: 0.75rem 1rem; margin-bottom: 1rem; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Cookbook</h1>
+            {% if session_csrf %}
+            <form method="post" action="/logout" hx-headers='{{ {"X-CSRF-Token": session_csrf}|tojson }}'>
+                <input type="hidden" name="csrf_token" value="{{ session_csrf }}">
+                <button type="submit">Log out</button>
+            </form>
+            {% endif %}
+        </header>
+        <main>
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+</body>
+</html>

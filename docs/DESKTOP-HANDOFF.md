@@ -1,5 +1,35 @@
 # Desktop handoff — 2026-10-22
 
+## Latest checkpoint — Task 7.5
+
+This checkpoint supersedes the earlier Task 7.4 snapshot below. Read
+`PROJECT-STATUS.md` before acting.
+
+- Active branch `task/7.5-login-routes`, based on `5bdec30`; Task 7.5 files
+  are approved for commit/push. Merging remains subject to owner approval.
+- Task 7.4 plus startup fixes are pushed on `task/7.4-session-core` but
+  unmerged. `main` remains at `f18d2c6`.
+- Implemented CSRF helpers, GET/POST login, POST logout, minimal Jinja2 forms,
+  multipart dependency, template package data, and a credential-hash check
+  under the session-issuance user lock to reject stale in-flight logins.
+- Full isolated suite: **273 passed**, existing warning only. Alembic check
+  found no schema drift; v6 head unchanged. Fresh Qwen review identified two
+  account-change races, both corrected and regression-tested. The disposable
+  database was removed; development container states/start times were unchanged.
+- Development stack was not rebuilt: http://127.0.0.1:8000 still serves the
+  health-only image. No bootstrap/account creation or cookbook UI exists yet;
+  login's `/` success target belongs to a later UI task.
+- Next: owner review/integration, then Task 7.6 lockout and Task 7.7 bootstrap.
+- **Fresh Qwen session after every tiny subtask.** The combined route session
+  was stopped after ~17 minutes of inspection/planning without source output.
+  Separate templates, GET, POST-login, and logout prompts succeeded.
+  Use `ollama-remote/qwen3.8:27b-128k` through OpenCode.
+- Corrected C2 contract overrides stale S5 `htmx.config.headers`: serialized
+  `hx-headers`; mandatory hidden field plus browser cookie for pre-auth;
+  header precedence/form fallback for session CSRF. Setup belongs to S7.
+
+## Earlier Task 7.4 snapshot (historical)
+
 Read this file and `PROJECT-STATUS.md`, then verify the live checkout before making changes.
 
 ## First commands

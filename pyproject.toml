@@ -13,6 +13,8 @@ dependencies = [
   "pydantic-settings>=2.2,<3",
   "httpx>=0.27",
   "argon2-cffi>=23.1",
+  "jinja2>=3.1,<4",
+  "python-multipart>=0.0.18",
 ]
 
 [dependency-groups]
@@ -25,6 +27,9 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+cookbook = ["templates/*.html"]
 
 [build-system]
 requires = ["setuptools>=68"]

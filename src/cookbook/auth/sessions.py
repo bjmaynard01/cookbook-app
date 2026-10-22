@@ -10,6 +10,7 @@ registered here.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import secrets
 import string
 from dataclasses import dataclass
@@ -29,6 +30,10 @@ from .identity import cookie_secure
 # bound length + alphabet before touching the database.
 _TOKEN_LEN = 43
 _TOKEN_CHARS = set(string.ascii_letters + string.digits + "-_")
+
+
+class SessionIssueRefused(ValueError):
+    """The account is no longer eligible for this session issuance."""
 
 
 @dataclass(frozen=True)
@@ -79,10 +84,13 @@ async def create_session(
     settings: Settings | None = None,
     created_ip: str | None = None,
     now: datetime | None = None,
+    expected_password_hash: str | None = None,
 ) -> tuple[str, Session]:
     """Issue a new session for an active user; returns (raw_token, row).
 
-    Raises ValueError for a missing or inactive user and inserts nothing.
+    Raises SessionIssueRefused for a missing/inactive user or credentials
+    changed since verification, inserting nothing. Login supplies the hash
+    it verified so a concurrent password reset cannot mint a stale session.
     """
     ts = _require_naive_utc(now)
     ttl = _ttl_hours(settings)
@@ -103,7 +111,11 @@ async def create_session(
         )
         user = result.scalar_one_or_none()
         if user is None or not user.is_active:
-            raise ValueError(f"cannot issue session: user {user_id!r} is missing or inactive")
+            raise SessionIssueRefused("account is missing or inactive")
+        if expected_password_hash is not None and not hmac.compare_digest(
+            user.password_hash.encode("utf-8"), expected_password_hash.encode("utf-8")
+        ):
+            raise SessionIssueRefused("account credentials changed")
         db.add(row)
     return raw_token, row
 
