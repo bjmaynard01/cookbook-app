@@ -1,7 +1,7 @@
 # Dev environment, full two-service shape (spec 9.1).
-# All persistent state lives under /mnt/container/<container_name> on the host:
-#   /mnt/container/db   -> MariaDB data dir
-#   /mnt/container/app  -> media uploads
+# All persistent state lives under COOKBOOK_DATA_DIR on the host:
+#   <COOKBOOK_DATA_DIR>/db  -> MariaDB data dir
+#   <COOKBOOK_DATA_DIR>/app -> media uploads
 # No named or anonymous volumes. Secrets come from .env (git-ignored).
 #
 # For the PRODUCTION deploy where you point the app at an EXISTING MariaDB,
@@ -18,7 +18,9 @@ services:
       MARIADB_USER: ${DB_USER:?DB_USER missing}
       MARIADB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD missing}
     volumes:
-      - /mnt/container/db:/var/lib/mysql
+      - type: bind
+        source: ${COOKBOOK_DATA_DIR:-/mnt/container}/db
+        target: /var/lib/mysql
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 5s
@@ -51,5 +53,7 @@ services:
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY missing}
       SESSION_TTL_HOURS: "12"
     volumes:
-      - /mnt/container/app:/media
+      - type: bind
+        source: ${COOKBOOK_DATA_DIR:-/mnt/container}/app
+        target: /media
     restart: unless-stopped

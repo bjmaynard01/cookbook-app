@@ -36,7 +36,9 @@ COPY src ./src
 COPY alembic.ini ./
 COPY alembic ./alembic
 COPY bin/docker-entrypoint.sh ./bin/docker-entrypoint.sh
-RUN chmod +x ./bin/docker-entrypoint.sh && chown -R cookbook:cookbook /app
+RUN sed -i 's/\r$//' ./bin/docker-entrypoint.sh \
+    && chmod +x ./bin/docker-entrypoint.sh \
+    && chown -R cookbook:cookbook /app
 USER cookbook
 VOLUME ["/media"]
 EXPOSE 8000

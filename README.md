@@ -1,11 +1,12 @@
 # Cookbook app
 
 A local-first family cookbook built with FastAPI, SQLAlchemy, Alembic, and
-MariaDB. The repository currently contains the application foundation, health
-endpoints, the `users` table, and the first Task 6 `recipes` table. Recipe
-editing, browsing, import, authentication, and the remaining data-model tables
-are planned but not yet implemented. See [project status](docs/PROJECT-STATUS.md)
-and the [desktop handoff](docs/DESKTOP-HANDOFF.md) before starting new work.
+MariaDB. The repository has the complete Task 6 data model and the first
+authentication services (identity, password hashing, sessions, and cookie
+helpers). The app currently exposes health endpoints only; login/logout pages,
+recipe browsing/editing, search, and import are still planned. See the
+[project status](docs/PROJECT-STATUS.md) and [desktop handoff](docs/DESKTOP-HANDOFF.md)
+before starting new work.
 
 ## Work on another machine
 
@@ -16,10 +17,14 @@ environments, and WordPress exports are intentionally not committed; move or
 recreate them separately.
 
 For local development, install Docker with Compose. The dev stack uses host
-directories `/mnt/container/db` for MariaDB and `/mnt/container/app` for media;
-create them with permissions suitable for the containers before starting the
-stack. It uses no named or anonymous volumes. Copy `.env.example` to `.env`,
-replace every example secret and password, and keep `.env` untracked. Then:
+directories under `COOKBOOK_DATA_DIR` for MariaDB and media. It uses bind
+mounts rather than named or anonymous volumes. Copy `.env.example` to `.env`,
+replace every example secret and password, and keep `.env` untracked. On
+Windows, set `COOKBOOK_DATA_DIR` in `.env` to a local directory outside synced
+folders, such as `C:/Users/<you>/AppData/Local/cookbook-app`, and create its
+`db` and `app` subdirectories before starting. Do not use the Linux default
+`/mnt/container` from PowerShell; it may resolve to a small Docker-side
+filesystem. Then:
 
 ```bash
 docker compose up -d --build
@@ -71,7 +76,7 @@ and the direct peer is used as the client identity.
 ## Deployment boundary
 
 `docker-compose.yml` is a two-service **development** configuration: it starts
-its own MariaDB and uses fixed `/mnt/container` bind mounts. The application
+its own MariaDB and uses bind mounts under `COOKBOOK_DATA_DIR`. The application
 code can connect to another MariaDB through `DB_*` settings, but a separate
 production/cloud Compose configuration, persistent storage, secrets, backup,
 and access controls have not been built or reviewed. Cloning the repository
