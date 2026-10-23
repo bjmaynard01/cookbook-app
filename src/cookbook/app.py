@@ -11,7 +11,8 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from . import __version__
-from .auth import routes as auth_routes
+from .auth import admin_routes, routes as auth_routes
+from .auth.middleware import AuthMiddleware
 from .config import get_settings
 from .db import get_engine
 
@@ -24,6 +25,17 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title=settings.app_name, version=__version__, docs_url=None, redoc_url=None)
     app.state.start_time = _START
+
+    @app.exception_handler(Exception)
+    async def unexpected_error(request, exc):
+        # Keep the HTTP failure visible without exposing exception values or
+        # SQL parameters. Starlette still re-raises to the server/test harness.
+        log.error("request failed: %s", type(exc).__name__)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal server error"},
+            headers={"Cache-Control": "private, no-store"},
+        )
 
     @app.get("/healthz")
     async def healthz() -> dict:
@@ -70,5 +82,7 @@ def create_app() -> FastAPI:
     app.state.settings = settings
     # Task 7.5: auth routes read app.state.settings at request time, so the
     # assignment above just needs to hold before the first request lands.
+    app.add_middleware(AuthMiddleware)
     app.include_router(auth_routes.router)
+    app.include_router(admin_routes.router)
     return app

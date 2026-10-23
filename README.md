@@ -77,6 +77,18 @@ gains these commands and screens after a separately approved rebuild.
 
 ## Launch and trusted proxies
 
+Authentication checks the current database role on each request. Account
+creation, activation, role changes and password resets are admin-only form
+endpoints under `/admin/users`; disabling an account or changing its role or
+password revokes its sessions. Concurrent changes cannot remove the last active
+admin. Full admin screens remain a later UI task.
+
+All `POST`, `PUT`, `PATCH` and `DELETE` requests require CSRF. Authenticated
+requests use `X-CSRF-Token` (which takes precedence) or a hidden `csrf_token`
+form field. Login and setup require their signed form token plus the browser
+binding cookie. Successful anonymous public reads are cacheable; authenticated,
+cookie-setting, unsafe and error responses are private and not stored.
+
 The application owns the interpretation of `X-Forwarded-For` and
 `X-Forwarded-Proto` (see `src/cookbook/auth/identity.py`). It only honors
 those headers when the request's **direct TCP peer** falls inside
