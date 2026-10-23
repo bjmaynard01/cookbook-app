@@ -26,7 +26,7 @@ from starlette.templating import Jinja2Templates
 
 from ..db import session_scope
 from ..models import User
-from . import csrf, passwords, sessions
+from . import csrf, lockout, passwords, sessions
 from .identity import client_identity, cookie_secure
 
 templates = Jinja2Templates(directory=Path(__file__).resolve().parent.parent / "templates")
@@ -123,34 +123,71 @@ async def login_submit(request: Request):
     if not isinstance(username, str) or not isinstance(password, str):
         return _login_error_response(request, csrf_token, generic_401)
 
+    # Canonical lockout key. Invalid pairs fail with the same 401 body as a
+    # credential rejection; no counter can be written for a pair we cannot
+    # canonicalize, and no password work ever happens.
+    try:
+        pair = lockout.normalize_pair(username, client_identity(request, settings)[0])
+    except ValueError:
+        return _login_error_response(request, csrf_token, generic_401)
+
+    # Locked check BEFORE any DB credential lookup or password work, so a
+    # locked pair never spends Argon2 cycles. Only Locked is caught: DB and
+    # other operational errors propagate instead of being miscounted.
+    try:
+        await lockout.assert_not_locked(*pair, now=utc_now())
+    except lockout.Locked as exc:
+        # Fixed message: no username, IP, token, or count that would let an
+        # attacker distinguish pairs. No cookie is set, deleted, or refreshed.
+        response = templates.TemplateResponse(
+            request,
+            "login.html",
+            {
+                "csrf_token": csrf_token,
+                "error": "Too many failed attempts. Please wait before trying again.",
+            },
+            status_code=429,
+        )
+        response.headers["Retry-After"] = str(exc.retry_after)
+        response.headers["Cache-Control"] = "private, no-store"
+        return response
+
     # Read credentials without retaining a transaction during password work.
     async with session_scope() as db:
-        result = await db.execute(select(User).where(User.username == username))
+        # pair[0] is already stripped+lowercased; the DB match is case-insensitive.
+        result = await db.execute(select(User).where(User.username == pair[0]))
         user = result.scalar_one_or_none()
 
     if user is None:
-        # Comparable Argon2 work for an unknown account.
+        # Comparable Argon2 work for an unknown account, then count it.
         await run_in_threadpool(passwords.dummy_verify, password)
+        await lockout.record_failure(*pair, now=utc_now())
         return _login_error_response(request, csrf_token, generic_401)
 
     if not user.is_active:
         # Still burn a verify so an attacker cannot fingerprint deactivation.
         await run_in_threadpool(passwords.verify_password, password, user.password_hash)
+        await lockout.record_failure(*pair, now=utc_now())
         return _login_error_response(request, csrf_token, generic_401)
 
     if not await run_in_threadpool(passwords.verify_password, password, user.password_hash):
+        await lockout.record_failure(*pair, now=utc_now())
         return _login_error_response(request, csrf_token, generic_401)
 
     # Success: issue the session, set the session cookie, and clear the
-    # preauth browser secret in the same response.
+    # preauth browser secret in the same response. login_pair lets
+    # create_session clear this pair's failure history inside its own
+    # transaction; a standalone clear_pair would race and is never called.
     try:
         raw_token, _row = await sessions.create_session(
             user.id,
             settings=settings,
-            created_ip=client_identity(request, settings)[0] or None,
+            created_ip=pair[1] or None,
             expected_password_hash=user.password_hash,
+            login_pair=pair,
         )
     except sessions.SessionIssueRefused:
+        await lockout.record_failure(*pair, now=utc_now())
         return _login_error_response(request, csrf_token, generic_401)
     secure = client_identity(request, settings)[1] == "https"
     response = RedirectResponse("/", status_code=302)

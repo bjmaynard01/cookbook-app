@@ -1,18 +1,18 @@
-# Project status — 2026-10-22
+# Project status — 2026-10-23
 
 ## Current checkpoint
 
 - Repository: `https://github.com/bjmaynard01/cookbook-app`.
 - `main` and local `origin/main`: `f18d2c6` (Task 7.3 password-service correction).
-- Active task branch: `task/7.5-login-routes`, based on `5bdec30` (Task 7.4 plus Windows runtime fixes). Owner approved committing and pushing Task 7.5. Neither Task 7.4 nor Task 7.5 is merged to `main`.
+- Active task branch: `task/7.6-lockout`, based on Task 7.5 commit `d4beca8` (pushed). Owner approved committing and pushing Task 7.6 on 2026-10-23. Tasks 7.4–7.6 remain unmerged to `main`.
 - Check live Git state before acting; this status file is a maintained snapshot, not a replacement for Git.
 - Alembic head: `e4c7a91d2f30` (v6 authentication schema).
 
 ## What the app can do today
 
-The backend foundation and full Task 6 data model are in place. Authentication includes trusted client identity, Argon2id passwords, database-backed sessions, cookie helpers, and now uncommitted login/logout routes with browser-bound pre-auth CSRF and minimal login templates. There is no bootstrap/account-creation screen, cookbook UI, recipe CRUD, search, or import yet. The running Docker development image still exposes only health endpoints; Task 7.5 has been verified in-process against isolated MariaDB, not deployed to that stack.
+The backend foundation and full Task 6 data model are in place. Authentication includes trusted client identity, Argon2id passwords, database-backed sessions, cookie helpers, login/logout forms and browser-bound pre-auth CSRF. Task 7.6 adds uncommitted per-IP/username lockout with escalating waits and transactional reset on login success. There is no bootstrap/account-creation screen, cookbook UI, recipe CRUD, search, or import yet. The running Docker development image still exposes only health endpoints; auth slices have been verified in-process against isolated MariaDB, not deployed to that stack.
 
-The local Windows Docker Compose stack was healthy on 2026-10-22. Task 7.5 full isolated verification passed **273 tests**, with the existing Starlette/httpx deprecation warning. Alembic found no new upgrade operations; head remains v6. Fresh Qwen review identified two account-change races; both were corrected and regression-tested. The disposable database was removed; development container states and start times were unchanged.
+The local Windows Docker Compose stack was healthy on 2026-10-22. Task 7.6 full isolated verification passed **311 tests**, with the existing Starlette/httpx deprecation warning. Alembic found no new upgrade operations; head remains v6. Final Task 7.6 review/cleanup status is recorded in `task-7.6-progress.md`.
 
 ## Completed work
 
@@ -23,7 +23,8 @@ The local Windows Docker Compose stack was healthy on 2026-10-22. Task 7.5 full 
 - Task 7.3: Argon2id password service and operational-error handling — final commit `f18d2c6`.
 - Task 7.4: session create/load/revoke lifecycle and cookie helpers — `aba0eb4`; 220 tests passed.
 - Windows local runtime support: Compose data path is configurable with `COOKBOOK_DATA_DIR`; the Docker image normalizes the entrypoint shell script to LF so Windows checkouts start correctly.
-- Task 7.5 (uncommitted): CSRF helpers, GET/POST login, POST logout, Jinja2 templates and dependencies. Session issuance checks the verified credential hash under the user lock to refuse stale logins after account changes.
+- Task 7.5 — `d4beca8` (pushed): CSRF helpers, GET/POST login, POST logout, Jinja2 templates and dependencies. Session issuance checks the verified credential hash under the user lock to refuse stale logins after account changes.
+- Task 7.6 (approved for commit/push): atomic failure counters, 10/20/40/60-minute lockout, HTTP 429 with Retry-After before password work, canonical identity keys, and history reset in the session-issuance transaction. Fresh pre-commit verification on 2026-10-23 passed 311 tests with no schema drift.
 
 ## Approved auth decisions
 
@@ -38,7 +39,7 @@ Use the approved plan as the detailed source of truth for all implementation con
 
 ## Next work
 
-Finish owner review/integration of Task 7.5 before the next slice. Task 7.6 is lockout service and login integration; Task 7.7 adds setup/bootstrap and CLI. Login redirects to `/` per contract, but the root cookbook UI is a later task. Use a fresh Qwen session for each tiny subtask; templates, GET login, POST login, and logout worked better as separate prompts than a combined route prompt. Notify the owner with access instructions when a usable app is available.
+Task 7.6 review is complete and commit/push approved; merging remains subject to owner approval. Task 7.7 is setup/bootstrap and CLI; then roles/admin lifecycle and global hardening follow. Login redirects to `/` per contract, but the root cookbook UI is a later task. Use a fresh Qwen session for each tiny subtask with exact APIs and minimal read scope. Notify the owner with access instructions when a usable app is available.
 
 ## Local Windows development data
 

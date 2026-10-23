@@ -1,6 +1,24 @@
-# Desktop handoff — 2026-10-22
+# Desktop handoff — 2026-10-23
 
-## Latest checkpoint — Task 7.5
+## Latest checkpoint — Task 7.6
+
+- Active branch `task/7.6-lockout`, based on `d4beca8` (Task 7.5 pushed).
+  Task 7.6 commit/push approved on 2026-10-23; no merge authorization.
+- Added atomic failure counters, canonical username/IP keys, escalating
+  10/20/40/60-minute waits, and HTTP 429/Retry-After before password work.
+  Successful login resets history in the same transaction as session issuance.
+- Full isolated verification: **311 passed**, existing warning only; no
+  schema drift. See `task-7.6-progress.md` for final review/cleanup status.
+- Fresh Qwen review complete: no blocking findings. Review coverage gap
+  addressed; optional DB-fault test deferred. Test DB removed and development
+  states/start times unchanged. Ready for owner review and approved integration.
+- Fresh Qwen session per subtask: failure state, check/reset helpers,
+  session-transaction reset, route integration, and read-only final review.
+- Existing six Task 7.4 note deletions are unrelated and remain unstaged.
+- Development stack is not rebuilt; port 8000 still serves health-only image.
+  Next planned slice is Task 7.7 setup/bootstrap and CLI.
+
+## Task 7.5 checkpoint (historical)
 
 This checkpoint supersedes the earlier Task 7.4 snapshot below. Read
 `PROJECT-STATUS.md` before acting.

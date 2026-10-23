@@ -55,6 +55,8 @@ def probe(monkeypatch, body):
             try:
                 async with session_scope() as db:
                     await db.execute(delete(User).where(User.id == uid))
+                    await db.execute(delete(LoginAttempt).where(
+                        LoginAttempt.username.in_([username, "unknown-" + uid])))
             finally:
                 await get_engine().dispose()
                 get_settings.cache_clear()
@@ -227,6 +229,9 @@ def test_password_operational_errors_propagate(monkeypatch):
         with pytest.raises(RuntimeError, match="test password service failure"):
             await client.post("/login", data={"username": username, "password": PASSWORD,
                                              "csrf_token": token(page)})
+        async with session_scope() as db:
+            assert (await db.execute(select(func.count()).select_from(LoginAttempt).where(
+                LoginAttempt.username == username))).scalar_one() == 0
     probe(monkeypatch, body)
 
 
@@ -336,4 +341,7 @@ def test_account_change_between_verification_and_session_issue_refuses_login(mon
         assert not response.headers.get_list("set-cookie")
         async with session_scope() as db:
             assert (await db.execute(select(func.count()).select_from(Session).where(Session.user_id == uid))).scalar_one() == 0
+            attempt = (await db.execute(select(LoginAttempt).where(
+                LoginAttempt.username == username, LoginAttempt.ip == "127.0.0.1"))).scalar_one()
+            assert attempt.attempts == 1 and attempt.locked_until is None
     probe(monkeypatch, body)

@@ -85,12 +85,15 @@ async def create_session(
     created_ip: str | None = None,
     now: datetime | None = None,
     expected_password_hash: str | None = None,
+    login_pair: tuple[str, str] | None = None,
 ) -> tuple[str, Session]:
     """Issue a new session for an active user; returns (raw_token, row).
 
     Raises SessionIssueRefused for a missing/inactive user or credentials
     changed since verification, inserting nothing. Login supplies the hash
     it verified so a concurrent password reset cannot mint a stale session.
+    An optional (username, ip) pair's lockout history is deleted atomically
+    with the issuance; refused issuance leaves it untouched.
     """
     ts = _require_naive_utc(now)
     ttl = _ttl_hours(settings)
@@ -116,6 +119,10 @@ async def create_session(
             user.password_hash.encode("utf-8"), expected_password_hash.encode("utf-8")
         ):
             raise SessionIssueRefused("account credentials changed")
+        if login_pair is not None:
+            from . import lockout
+
+            await lockout.clear_pair(*login_pair, db=db)
         db.add(row)
     return raw_token, row
 
