@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+
+{% block title %}Create owner account - Cookbook{% endblock %}
+
+{% block content %}
+<h1>Create owner account</h1>
+
+{% if error %}
+<div class="alert" role="alert">{{ error }}</div>
+{% endif %}
+
+<form method="post" action="/setup" hx-headers='{{ {"X-CSRF-Token": csrf_token}|tojson }}'>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label for="username">Username</label>
+    <input type="text" id="username" name="username" value="owner" autocomplete="username" required maxlength="60">
+    <label for="password">Password</label>
+    <input type="password" id="password" name="password" autocomplete="new-password" minlength="8" required>
+    <p>Passwords must be at least 8 characters long. There is no required mix of character types.</p>
+    <button type="submit">Create account</button>
+</form>
+{% endblock %}

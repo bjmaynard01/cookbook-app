@@ -26,7 +26,7 @@ from starlette.templating import Jinja2Templates
 
 from ..db import session_scope
 from ..models import User
-from . import csrf, lockout, passwords, sessions
+from . import bootstrap, csrf, lockout, passwords, sessions
 from .identity import client_identity, cookie_secure
 
 templates = Jinja2Templates(directory=Path(__file__).resolve().parent.parent / "templates")
@@ -41,6 +41,13 @@ def utc_now() -> datetime:
 @router.get("/login")
 async def login_page(request: Request):
     settings = request.app.state.settings
+
+    # Before any user exists there is nothing to log in against: send the
+    # browser straight to the one-time setup flow.
+    if not await bootstrap.is_bootstrapped():
+        response = RedirectResponse("/setup", status_code=302)
+        response.headers["Cache-Control"] = "private, no-store"
+        return response
 
     # A fresh secret on every GET means a replayed or cached copy of the
     # login page cannot reuse a previous browser secret (anti-replay).
@@ -74,6 +81,142 @@ async def login_page(request: Request):
     return response
 
 
+@router.get("/setup")
+async def setup_page(request: Request):
+    settings = request.app.state.settings
+    secure = client_identity(request, settings)[1] == "https"
+
+    # Setup is a one-time first-owner flow: once any user exists the page is
+    # refused outright, with no browser-secret cookie left behind.
+    if await bootstrap.is_bootstrapped():
+        denied = Response(status_code=403, headers={"Cache-Control": "private, no-store"})
+        denied.headers.append("set-cookie", csrf.browser_secret_clear(secure=secure))
+        return denied
+
+    browser_secret = secrets.token_urlsafe(16)
+    csrf_token = csrf.issue_preauth(
+        browser_secret,
+        "setup",
+        now=utc_now(),
+        key=settings.secret_key,
+    )
+
+    response = templates.TemplateResponse(
+        request,
+        "setup.html",
+        {"csrf_token": csrf_token, "error": None},
+        status_code=200,
+    )
+    response.headers.append(
+        "set-cookie",
+        csrf.browser_secret_set_cookie(browser_secret, secure=secure),
+    )
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
+
+
+def _setup_error_response(request: Request, csrf_token: str, error: str) -> Response:
+    """Re-render the setup form for an input-policy failure.
+
+    Keeps the same token and browser secret (no Set-Cookie at all), so the
+    caller can simply resubmit after fixing their fields.
+    """
+    response = templates.TemplateResponse(
+        request,
+        "setup.html",
+        {"csrf_token": csrf_token, "error": error},
+        status_code=400,
+    )
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
+
+
+@router.post("/setup")
+async def setup_submit(request: Request):
+    settings = request.app.state.settings
+    secure = client_identity(request, settings)[1] == "https"
+
+    # The closed-GET behavior: once an owner exists, setup is permanently
+    # refused and no browser secret may linger in the browser.
+    if await bootstrap.is_bootstrapped():
+        denied = Response(status_code=403, headers={"Cache-Control": "private, no-store"})
+        denied.headers.append("set-cookie", csrf.browser_secret_clear(secure=secure))
+        return denied
+
+    try:
+        form = await request.form()
+    except (HTTPException, MultiPartException, ValueError):
+        # Malformed bodies get a cookie-free 403 like every other parse fault.
+        return Response(status_code=403, headers={"Cache-Control": "private, no-store"})
+
+    # The preauth token travels in the form (hidden field), never a header.
+    csrf_token = form.get("csrf_token")
+    browser_secret = request.cookies.get(csrf.PREAUTH_COOKIE_NAME)
+    # CSRF must pass BEFORE any password hashing or DB mutation: no
+    # cross-site form may ever spend Argon2 time or create an account.
+    if not (
+        isinstance(csrf_token, str)
+        and browser_secret
+        and csrf.verify_preauth(
+            csrf_token,
+            browser_secret,
+            "setup",
+            now=utc_now(),
+            key=settings.secret_key,
+        )
+    ):
+        # No Set-Cookie on 403: the browser's secret must stay untouched.
+        return Response(status_code=403, headers={"Cache-Control": "private, no-store"})
+
+    username = form.get("username")
+    password = form.get("password")
+    generic_policy = "Invalid username or password. Check both fields and try again."
+    if not isinstance(username, str) or not isinstance(password, str):
+        return _setup_error_response(request, csrf_token, generic_policy)
+
+    try:
+        # Validate the audit identity before committing the one-time owner.
+        created_ip = lockout.normalize_pair(
+            username, client_identity(request, settings)[0]
+        )[1] or None
+        user = await bootstrap.create_first_admin(username, password)
+    except bootstrap.AlreadyBootstrapped:
+        # A second racer won the create: closed 403, and the preauth
+        # binding is deleted so nothing is kept for a retry.
+        denied = Response(status_code=403, headers={"Cache-Control": "private, no-store"})
+        denied.headers.append("set-cookie", csrf.browser_secret_clear(secure=secure))
+        return denied
+    except ValueError:
+        # Input rejected by policy (bad username length, etc.): same fixed
+        # message either way, no password ever echoed back.
+        return _setup_error_response(request, csrf_token, generic_policy)
+
+    try:
+        raw_token, _row = await sessions.create_session(
+            user.id,
+            settings=settings,
+            created_ip=created_ip,
+            expected_password_hash=user.password_hash,
+        )
+    except sessions.SessionIssueRefused:
+        # The account exists but sessioning failed: refuse closed with the
+        # preauth binding removed, rather than half-authenticating.
+        denied = Response(status_code=403, headers={"Cache-Control": "private, no-store"})
+        denied.headers.append("set-cookie", csrf.browser_secret_clear(secure=secure))
+        return denied
+
+    response = RedirectResponse("/", status_code=302)
+    sessions.set_session_cookie(
+        response, raw_token, secure=cookie_secure(request, settings),
+        ttl_hours=settings.session_ttl_hours
+    )
+    # Clear the pre-auth binding in the same response, Secure per scheme.
+    response.headers.append("set-cookie", csrf.browser_secret_clear(secure=secure))
+    # A redirect carrying a fresh session cookie must never be cached/shared.
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
+
+
 def _login_error_response(request: Request, csrf_token: str, error: str) -> Response:
     """Retain the validated token and browser binding for a credential retry."""
     response = templates.TemplateResponse(
@@ -90,6 +233,12 @@ def _login_error_response(request: Request, csrf_token: str, error: str) -> Resp
 @router.post("/login")
 async def login_submit(request: Request):
     settings = request.app.state.settings
+
+    # No users, nothing to authenticate: refuse before ANY form parsing,
+    # password work, or counter writes.
+    if not await bootstrap.is_bootstrapped():
+        return Response(status_code=403, headers={"Cache-Control": "private, no-store"})
+
     try:
         form = await request.form()
     except (HTTPException, MultiPartException, ValueError):

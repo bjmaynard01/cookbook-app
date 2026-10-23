@@ -266,29 +266,20 @@ def test_trusted_proxy_identity_controls_cookie_and_created_ip(monkeypatch):
 
 
 def test_login_page_rotation_and_safe_header_delivery(monkeypatch):
-    monkeypatch.setenv("DEBUG", "false")
-    monkeypatch.setenv("SECRET_KEY", "test-only-key")
-    monkeypatch.delenv("SECRET_KEY_FILE", raising=False)
-    get_settings.cache_clear()
-    async def run():
-        app = create_app()
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-            first = await client.get("/login")
-            second = await client.get("/login")
-            assert first.status_code == second.status_code == 200
-            assert cookies(first)["cookbook_csrf_pre"].value != cookies(second)["cookbook_csrf_pre"].value
-            for page in (first, second):
-                assert page.headers["cache-control"] == "private, no-store"
-                secret = cookies(page)["cookbook_csrf_pre"].value
-                assert secret not in page.text
-                assert "htmx.config.headers" not in page.text
-                headers = re.search(r"hx-headers='([^']+)'", page.text)
-                assert headers
-                assert json.loads(html.unescape(headers.group(1)))["X-CSRF-Token"] == token(page)
-    try:
-        asyncio.run(run())
-    finally:
-        get_settings.cache_clear()
+    async def body(app, client, username, uid):
+        first = await client.get("/login")
+        second = await client.get("/login")
+        assert first.status_code == second.status_code == 200
+        assert cookies(first)["cookbook_csrf_pre"].value != cookies(second)["cookbook_csrf_pre"].value
+        for page in (first, second):
+            assert page.headers["cache-control"] == "private, no-store"
+            secret = cookies(page)["cookbook_csrf_pre"].value
+            assert secret not in page.text
+            assert "htmx.config.headers" not in page.text
+            headers = re.search(r"hx-headers='([^']+)'", page.text)
+            assert headers
+            assert json.loads(html.unescape(headers.group(1)))["X-CSRF-Token"] == token(page)
+    probe(monkeypatch, body)
 
 
 def test_templates_escape_errors_and_deliver_session_csrf():

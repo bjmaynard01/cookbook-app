@@ -17,6 +17,9 @@ dependencies = [
   "python-multipart>=0.0.18",
 ]
 
+[project.scripts]
+cookbook = "cookbook.cli:main"
+
 [dependency-groups]
 dev = [
   "pytest>=8",

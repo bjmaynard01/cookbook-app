@@ -49,6 +49,32 @@ variables, run `.venv/bin/alembic upgrade head`, `.venv/bin/alembic check`, and
 `.venv/bin/pytest -q`. The latest verified result is recorded in the project
 status file. Do not commit `.env` or test credentials.
 
+## First owner and local recovery
+
+After installing this branch with `uv sync --frozen`, `uv run cookbook
+init-secret --out secret.key` generates a private key file and prints its path.
+Set `SECRET_KEY_FILE` to that path for the web app. Existing files are refused
+unless `--overwrite` is supplied; rotating the key invalidates signed tokens.
+
+Against a migrated database, run `uv run cookbook setup` for hidden interactive
+password entry, or `uv run cookbook setup --username owner --password-file
+/path/to/password`. Setup also accepts `FIRST_ADMIN_PASSWORD_FILE`, then
+`FIRST_ADMIN_PASSWORD` as fallbacks; these require `--username`. Passwords
+require at least eight characters, with spaces preserved. CLI account commands
+use `DB_*` configuration and work before a web secret is configured.
+
+The web alternative is `/setup` while the database contains no users. Both
+paths share a transaction guard: only one first owner can be created. Browser
+setup signs the owner in and redirects to `/`; the cookbook UI is a later task.
+
+Use `uv run cookbook user reset-password owner --interactive` (or
+`--password-file /path/to/password`) to reset an existing account and revoke all
+its sessions. Local recovery with `uv run cookbook setup --username owner
+--password-file /path/to/password --force-owner-recreation` additionally restores
+that existing account as an active admin and requires typing `yes/owner`.
+Recovery refuses nonexistent accounts. The running development image only
+gains these commands and screens after a separately approved rebuild.
+
 ## Launch and trusted proxies
 
 The application owns the interpretation of `X-Forwarded-For` and

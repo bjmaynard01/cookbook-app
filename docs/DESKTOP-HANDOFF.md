@@ -1,6 +1,22 @@
 # Desktop handoff — 2026-10-23
 
-## Latest checkpoint — Task 7.6
+## Task 7.7 implementation checkpoint
+
+Owner authorized beginning 7.7. Active branch `task/7.7-bootstrap`, based on
+Task 7.6 commit `b2941b5` (pushed). Read `task-7.7-progress.md`. Shared guarded
+bootstrap, browser setup, CLI setup/recovery/reset and secret generation are
+implemented. Full isolated suite: **366 passed**, existing warning only;
+Alembic no drift; wheel and installed CLI entrypoint verified. Both fresh
+read-only Qwen reviews complete with no blocking findings. See
+task-7.7-qwen-review-findings.md for fixes and optional suggestions.
+Owner explicitly confirmed https://ollama.maynardfolks.com/v1 is their trusted
+Qwen server and approved bounded source/prompts. Continue fresh sessions for
+each tiny subtask/review. Disposable DB removed; development app/db states and
+start times unchanged; six old note deletions untouched. Owner approved Task 7.7
+commit/push on 2026-10-23. Merge/deployment remain unapproved. Task 7.8
+roles/admin lifecycle is next; implementation awaits authorization.
+
+## Task 7.6 checkpoint
 
 - Active branch `task/7.6-lockout`, based on `d4beca8` (Task 7.5 pushed).
   Task 7.6 commit/push approved on 2026-10-23; no merge authorization.
