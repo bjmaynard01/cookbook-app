@@ -68,7 +68,7 @@ def test_zero_user_setup_creates_one_owner_session_then_closes(monkeypatch):
         assert secret["httponly"] and secret["samesite"].lower() == "strict"
         assert secret.value not in page.text
         response = await submit(client, token(page))
-        assert response.status_code == 302 and response.headers["location"] == "/"
+        assert response.status_code == 302 and response.headers["location"] == "/edit"
         assert cookies(response)["cookbook_csrf_pre"]["max-age"] == "0"
         assert cookies(response)["cookbook_session"].value
         async with session_scope() as db:

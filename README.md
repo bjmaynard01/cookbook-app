@@ -65,7 +65,7 @@ use `DB_*` configuration and work before a web secret is configured.
 
 The web alternative is `/setup` while the database contains no users. Both
 paths share a transaction guard: only one first owner can be created. Browser
-setup signs the owner in and redirects to `/`; the cookbook UI is a later task.
+setup signs the owner in and redirects to `/edit`.
 
 Use `uv run cookbook user reset-password owner --interactive` (or
 `--password-file /path/to/password`) to reset an existing account and revoke all

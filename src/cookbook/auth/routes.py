@@ -6,7 +6,7 @@ Set-Cookie (the cookie value is never rendered into the HTML).
 
 POST verifies the preauth CSRF token before any database or password work,
 checks credentials, and on success issues a server session and redirects to
-"/". Credential failures return an identical generic 401 login render so nothing
+the editor dashboard. Credential failures return an identical generic 401 login render so nothing
 distinguishes unknown user, wrong password, or inactive user.
 Logout validates the session's CSRF token before revoking and clearing cookies.
 """
@@ -205,7 +205,7 @@ async def setup_submit(request: Request):
         denied.headers.append("set-cookie", csrf.browser_secret_clear(secure=secure))
         return denied
 
-    response = RedirectResponse("/", status_code=302)
+    response = RedirectResponse("/edit", status_code=302)
     sessions.set_session_cookie(
         response, raw_token, secure=cookie_secure(request, settings),
         ttl_hours=settings.session_ttl_hours
@@ -339,7 +339,7 @@ async def login_submit(request: Request):
         await lockout.record_failure(*pair, now=utc_now())
         return _login_error_response(request, csrf_token, generic_401)
     secure = client_identity(request, settings)[1] == "https"
-    response = RedirectResponse("/", status_code=302)
+    response = RedirectResponse("/edit", status_code=302)
     sessions.set_session_cookie(
         response, raw_token, secure=cookie_secure(request, settings),
         ttl_hours=settings.session_ttl_hours

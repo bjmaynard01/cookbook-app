@@ -74,7 +74,7 @@ def test_login_success_logout_form_and_header(monkeypatch):
         assert 'autocomplete="current-password"' in page.text
         response = await client.post("/login", data={"username": username,
                                     "password": PASSWORD, "csrf_token": token(page)})
-        assert response.status_code == 302 and response.headers["location"] == "/"
+        assert response.status_code == 302 and response.headers["location"] == "/edit"
         issued = cookies(response)
         assert issued["cookbook_csrf_pre"]["max-age"] == "0"
         raw = issued["cookbook_session"].value
