@@ -1,43 +1,24 @@
 # Project status — 2026-10-30
 
-## Current repository state
+## Repository and task state
 
 - Repository: `https://github.com/bjmaynard01/cookbook-app`.
-- `main` and `origin/main` are both at `cfb19b8` (`feat(recipes): add shared draft and save validation`).
-- `main` is the only local and remote branch; Tasks 7.4–7.9 and Task 8 are consolidated there.
-- Alembic head is `e4c7a91d2f30` (v6 authentication schema).
+- Work on the permanent `dev` branch and push to `origin/dev`; `main` is the stable integration branch. Merge tested milestones from `dev` into `main`.
+- Task 10 (editor dashboard and recipe CRUD) is implemented on `main`. New work proceeds from `dev`.
+- The full v1 task list and current statuses are in [`BUILD-ROADMAP.md`](BUILD-ROADMAP.md).
 - Check live Git state before acting; this file is a maintained snapshot, not a replacement for Git.
 
 ## What the app can do
 
-The backend foundation includes the Task 6 recipe data model, browser and CLI owner setup, Argon2id passwords, database-backed sessions, login/logout, login lockout, role checks, guarded admin account operations, CSRF protection on unsafe requests, and cache policy for private responses.
+The backend foundation includes the recipe data model, browser and CLI owner setup, Argon2id passwords, database-backed sessions, login/logout, lockout, role checks, guarded admin account operations, CSRF protection, and private response cache policy.
 
-Task 8 adds the shared Pydantic recipe draft and pure save-readiness validation. Partial drafts are valid; saving requires a nonblank title, at least one category, and at least one nonblank ingredient. Missing steps produce a warning. Original nonblank line text and provenance are preserved, and total time is resolved from explicit or complete prep/cook values.
+The shared `RecipeDraft` contract and save-readiness validation preserve ordered sections and source ingredient text. The editor dashboard at `/edit` supports text, category, and tag filters and sorting. Editors can create, edit, and delete recipes using the shared server-rendered form. Recipe aliases protect existing URLs from deletion, and private editor responses use `private, no-store`.
 
-Task 8 verification: **23 focused tests passed**. The last full isolated suite, during Task 7.9, passed **401 tests** with the existing Starlette/httpx deprecation warning. The full suite has not been rerun after Task 8. No database migration was required for Task 8.
+Task 10 verification passed **456 tests** against disposable MariaDB, plus Python compilation and whitespace checks. One existing Starlette/httpx deprecation warning remains. No schema migration was added for Task 10.
 
-There is no recipe CRUD service or UI, recipe ingest, image upload pipeline, public cookbook interface, search, or WordPress importer yet. The development app has not been updated as part of Tasks 7.4–8.
+## Remaining product work
 
-## Completed work
-
-- Tasks 6.1–6.6: recipe schema, ordered body sections/items, categories and tags, aliases, migration audit, and full-chain schema verification.
-- Tasks 7.1–7.9: authentication schema and services, trusted client identity, password handling, sessions, login/logout, lockout, first-owner setup/recovery, roles/admin lifecycle, global CSRF and cache hardening.
-- Task 8: shared `RecipeDraft` contract and save-readiness validation. Plan: `docs/superpowers/plans/2026-10-30-recipe-draft.md`.
-
-Detailed product requirements and accepted decisions are in `docs/superpowers/specs/2026-09-20-cookbook-design.md`. Authentication contracts are in `docs/superpowers/plans/2026-10-16-authentication.md`.
-
-## Next work
-
-Task 9 is recipe CRUD services, slug generation, and rename handling. Create and review a detailed plan before implementation. The owner resolved the slug rule: generate a slug from the title on initial creation, then allow editing it; collision suffixing and recording old-slug aliases are part of Task 9. The shared draft validator from Task 8 is the input contract.
-
-## Approved authentication decisions
-
-- Password minimum: 8 characters, with no complexity rules.
-- Lockout: five failures in ten minutes, escalating 10/20/40/60-minute waits; successful login resets lockout state.
-- Pre-auth CSRF: browser-bound signed token, 15-minute lifetime; replay is allowed in the same browser.
-- Cookies: `__Host-` name with Secure; plain HTTP development uses the non-`__Host-` cookie name.
-- Local owner recovery restores a named existing account; it cannot create another owner.
-- Locked login returns 429 with `Retry-After`.
+Recipe image storage is the next task, followed by safe URL ingestion, deterministic parsing, optional LLM fallback, ingest review/save, public recipe pages, browse/search, WordPress migration, and backup/restore/cutover verification. See the roadmap for task boundaries and dependencies.
 
 ## Local Windows development data
 
@@ -50,6 +31,8 @@ The working database was the instance under Local AppData at the last inspection
 
 ## Working agreements
 
-The owner and Codex decide product direction. Use a fresh OpenCode/Qwen session for each small implementation subtask; each prompt must stand alone. The owner approved bounded source and prompt transfer to `https://ollama.maynardfolks.com/v1` using `ollama-remote/qwen3.8:27b-128k`. Do not create progress, handoff, or checkpoint notes; flag meaningful decision points. Keep database verification isolated and do not advance the running development database while a task is unmerged. Commit and push only when the owner authorizes it.
+- Use a fresh OpenCode/Qwen session for each bounded subtask when useful. The owner approved bounded source and prompt transfer to `https://ollama.maynardfolks.com/v1` using `ollama-remote/qwen3.8:27b-128k`.
+- Do not create progress, handoff, or checkpoint notes; flag meaningful decision points.
+- Keep database verification isolated and do not test or migrate against the running development database. Never read or commit `.env`.
 
 See `README.md` for setup.

@@ -4,7 +4,13 @@
 **Updated:** 2026-10-30
 **Planned scope:** 20 delivery tasks. Task boundaries can be revised if the owner changes product scope; this count covers the current v1 specification.
 
-This roadmap gives the project one ordered task sheet. Each task may have a separate design and implementation plan. Tasks 1–9 are complete; Task 10 is active. No task adds features explicitly excluded from the approved v1 spec.
+This roadmap gives the project one ordered task sheet. Each task may have a separate design and implementation plan. Tasks 1–10 are complete; Task 11 is next. No task adds features explicitly excluded from the approved v1 spec.
+
+## Branch workflow
+
+- `dev` is the permanent development branch. Implement and push task work there.
+- `main` is the stable integration branch. Merge tested task milestones from `dev` into `main`.
+- Do not create one-off task branches or develop directly on `main`.
 
 | Task | Name | Status | Main outcome |
 |---|---|---|---|
@@ -17,7 +23,7 @@ This roadmap gives the project one ordered task sheet. Each task may have a sepa
 | 7 | Authentication and account security | Complete | Setup, sessions, login, lockout, roles, CSRF, and admin lifecycle. |
 | 8 | Shared recipe draft and validation | Complete | One draft contract and save-readiness validation. |
 | 9 | Recipe persistence services | Complete | Slugs plus caller-managed create, read, update, rename, and delete services. |
-| 10 | Editor dashboard and recipe CRUD | Active | Authenticated server-rendered recipe listing and manual create/edit/delete forms. [Plan](superpowers/plans/2026-10-30-editor-crud.md) |
+| 10 | Editor dashboard and recipe CRUD | Complete | Authenticated server-rendered recipe listing and manual create/edit/delete forms. [Plan](superpowers/plans/2026-10-30-editor-crud.md) |
 | 11 | Recipe image storage | Planned | Local media paths, upload/download validation, and non-blocking image persistence. |
 | 12 | Safe URL fetch and page extraction | Planned | Public-URL validation, SSRF defenses, bounded HTTP fetches, and HTML extraction. |
 | 13 | Deterministic recipe parsing | Planned | JSON-LD and microdata extraction into the shared `RecipeDraft`. |
