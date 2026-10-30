@@ -57,6 +57,10 @@ def test_editor_and_admin_can_open_private_dashboard_and_form(monkeypatch) -> No
                         user_id, settings=app.state.settings
                     )
                     client.cookies.set(session_cookie_name(secure=False), raw_token)
+                    root = await client.get("/")
+                    assert root.status_code == 302
+                    assert root.headers["location"] == "/edit"
+                    assert root.headers["cache-control"] == "private, no-store"
                     dashboard = await client.get("/edit")
                     assert dashboard.status_code == 200, dashboard.text
                     assert dashboard.headers["cache-control"] == "private, no-store"

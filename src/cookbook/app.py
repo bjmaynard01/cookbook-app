@@ -6,9 +6,10 @@ import os
 import tempfile
 import time
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
+from starlette.responses import RedirectResponse
 
 from . import __version__
 from .auth import admin_routes, routes as auth_routes
@@ -26,6 +27,13 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title=settings.app_name, version=__version__, docs_url=None, redoc_url=None)
     app.state.start_time = _START
+
+    @app.get("/", include_in_schema=False)
+    async def home(request: Request):
+        target = "/edit" if getattr(request.state, "user", None) is not None else "/login"
+        response = RedirectResponse(target, status_code=302)
+        response.headers["Cache-Control"] = "private, no-store"
+        return response
 
     @app.exception_handler(Exception)
     async def unexpected_error(request, exc):
