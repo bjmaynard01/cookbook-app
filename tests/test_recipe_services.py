@@ -40,6 +40,7 @@ from cookbook.recipes import (
     UnknownCategories,
     create_recipe,
     delete_recipe,
+    set_recipe_image,
     update_recipe,
     validate_for_save,
 )
@@ -1373,3 +1374,39 @@ async def run_delete_missing_and_outer_rollback() -> None:
 
 def test_delete_reports_missing_and_respects_caller_rollback() -> None:
     asyncio.run(run_delete_missing_and_outer_rollback())
+
+
+async def run_set_recipe_image_is_caller_managed() -> None:
+    factory = get_session()
+    session = factory()
+    recipe_id: str | None = None
+    try:
+        await session.begin()
+        category = (
+            await session.execute(select(Category).where(Category.id == BREAKFAST_ID))
+        ).scalar_one()
+        recipe = await create_recipe(
+            session, build_save_data(category.name), category_ids=[category.id]
+        )
+        recipe_id = recipe.id
+
+        previous = await set_recipe_image(session, recipe_id, "recipes/old.png")
+        assert previous is None
+        previous = await set_recipe_image(session, recipe_id, "recipes/new.webp")
+        assert previous == "recipes/old.png"
+        assert recipe.image_path == "recipes/new.webp"
+        assert recipe.title == TITLE
+        assert session.in_transaction() is True
+
+        with pytest.raises(RecipeNotFound):
+            await set_recipe_image(session, str(uuid.uuid4()), "recipes/missing.png")
+        await session.rollback()
+        async with factory() as verify:
+            assert await verify.get(Recipe, recipe_id) is None
+    finally:
+        await session.close()
+        await get_engine().dispose()
+
+
+def test_set_recipe_image_only_changes_image_and_leaves_transaction_to_caller() -> None:
+    asyncio.run(run_set_recipe_image_is_caller_managed())

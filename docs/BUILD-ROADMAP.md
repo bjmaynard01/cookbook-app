@@ -4,7 +4,7 @@
 **Updated:** 2026-10-30
 **Planned scope:** 20 delivery tasks. Task boundaries can be revised if the owner changes product scope; this count covers the current v1 specification.
 
-This roadmap gives the project one ordered task sheet. Each task may have a separate design and implementation plan. Tasks 1–10 are complete; Task 11 is next. No task adds features explicitly excluded from the approved v1 spec.
+This roadmap gives the project one ordered task sheet. Each task may have a separate design and implementation plan. Tasks 1–11 are complete; Task 12 is next. No task adds features explicitly excluded from the approved v1 spec.
 
 ## Branch workflow
 
@@ -24,7 +24,7 @@ This roadmap gives the project one ordered task sheet. Each task may have a sepa
 | 8 | Shared recipe draft and validation | Complete | One draft contract and save-readiness validation. |
 | 9 | Recipe persistence services | Complete | Slugs plus caller-managed create, read, update, rename, and delete services. |
 | 10 | Editor dashboard and recipe CRUD | Complete | Authenticated server-rendered recipe listing and manual create/edit/delete forms. [Plan](superpowers/plans/2026-10-30-editor-crud.md) |
-| 11 | Recipe image storage | Planned | Local media paths, upload/download validation, and non-blocking image persistence. |
+| 11 | Recipe image storage | Complete | Validated local JPEG/PNG/WebP uploads, safe serving, replacement/removal, and post-commit cleanup. [Design](superpowers/specs/2026-10-30-recipe-image-storage-design.md) |
 | 12 | Safe URL fetch and page extraction | Planned | Public-URL validation, SSRF defenses, bounded HTTP fetches, and HTML extraction. |
 | 13 | Deterministic recipe parsing | Planned | JSON-LD and microdata extraction into the shared `RecipeDraft`. |
 | 14 | Optional LLM parsing fallback | Planned | Configurable OpenAI-compatible fallback with bounded time and no-key behavior. |

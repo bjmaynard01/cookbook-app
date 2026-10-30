@@ -36,6 +36,12 @@ def test_database_url_shape(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+def test_upload_limit_must_be_positive(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("UPLOAD_MAX_BYTES", "0")
+    with pytest.raises(ValueError):
+        Settings()
+
+
 def test_database_url_without_password(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SECRET_KEY", "k")
     monkeypatch.setenv("DB_USER", "cookbook")

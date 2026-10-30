@@ -20,6 +20,8 @@ request.state.user. The body is never logged (nor any token or secret).
 """
 from __future__ import annotations
 
+import re
+
 from starlette.datastructures import FormData
 from starlette.exceptions import HTTPException
 from starlette.formparsers import MultiPartException
@@ -38,6 +40,8 @@ PREAUTH_PATHS = frozenset({"/login", "/setup"})
 NO_LOAD_PATHS = frozenset({"/login", "/setup", "/logout", "/healthz", "/readyz"})
 NO_RENEW_PATHS = frozenset({"/login", "/setup", "/logout"})
 _NO_STORE = "private, no-store"
+_IMAGE_UPLOAD_PATH = re.compile(r"^/recipes/[^/]+/image$")
+_MULTIPART_OVERHEAD_BYTES = 64 * 1024
 _SESSION_COOKIE_NAMES = frozenset(
     {sessions.HOST_COOKIE_NAME.lower(), sessions.DEV_COOKIE_NAME.lower()}
 )
@@ -86,6 +90,22 @@ class AuthMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         method = request.method
         settings = request.app.state.settings
+
+        # Auth middleware parses unsafe form bodies before route handlers run.
+        # Bound image requests here so multipart uploads cannot be fully
+        # buffered before the image service applies its per-file limit.
+        if method == "POST" and _IMAGE_UPLOAD_PATH.fullmatch(path):
+            raw_length = request.headers.get("content-length")
+            if raw_length is None:
+                return Response(status_code=411, headers={"Cache-Control": _NO_STORE})
+            try:
+                content_length = int(raw_length)
+            except ValueError:
+                return Response(status_code=400, headers={"Cache-Control": _NO_STORE})
+            if content_length < 0:
+                return Response(status_code=400, headers={"Cache-Control": _NO_STORE})
+            if content_length > settings.upload_max_bytes + _MULTIPART_OVERHEAD_BYTES:
+                return Response(status_code=413, headers={"Cache-Control": _NO_STORE})
 
         user = None
         if method in UNSAFE_METHODS:
@@ -146,14 +166,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
             or method in UNSAFE_METHODS
             or response.status_code >= 400
             or response.headers.getlist("set-cookie")
-            or "private" in existing
-            or "no-store" in existing
         ):
             # Authenticated, unsafe, error, cookie-setting, and already
             # private/no-store responses are never shareable. Never weaken a
             # route's existing policy.
             response.headers["cache-control"] = _NO_STORE
-        else:
+        elif not existing:
             for name, value in cache.cache_headers_for(
                 path, behind_login=False
             ).items():

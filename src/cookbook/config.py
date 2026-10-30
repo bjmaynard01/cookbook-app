@@ -79,7 +79,9 @@ class Settings(BaseSettings):
 
     # --- media ---
     media_dir: Path = Field(default=Path("/media"), alias="MEDIA_DIR")
-    upload_max_bytes: int = Field(default=10 * 1024 * 1024, alias="UPLOAD_MAX_BYTES")
+    upload_max_bytes: int = Field(
+        default=10 * 1024 * 1024, alias="UPLOAD_MAX_BYTES", gt=0
+    )
 
     # --- trusted proxy / cookie security (auth S2) ---
     trusted_proxy_cidrs: str = Field(default="", alias="TRUSTED_PROXY_CIDRS")

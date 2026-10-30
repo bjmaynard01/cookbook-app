@@ -819,6 +819,29 @@ async def delete_recipe(db: AsyncSession, recipe_id: str) -> None:
     await db.flush()
 
 
+async def set_recipe_image(
+    db: AsyncSession, recipe_id: str, image_path: str | None
+) -> str | None:
+    """Set or clear a recipe image path, returning the previous path.
+
+    The caller owns commit/rollback. File validation and disk operations live
+    in the image-storage layer; this service only changes the recipe field.
+    """
+    if image_path is not None and (not image_path or len(image_path) > 500):
+        raise InvalidRecipeInput({"image_path": "Image path is empty or too long."})
+    recipe = (
+        await db.execute(
+            select(Recipe).where(Recipe.id == recipe_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if recipe is None:
+        raise RecipeNotFound(recipe_id)
+    previous_path = recipe.image_path
+    recipe.image_path = image_path
+    await db.flush()
+    return previous_path
+
+
 async def get_recipe(
     db: AsyncSession,
     recipe_id: str,

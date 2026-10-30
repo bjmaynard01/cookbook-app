@@ -2,18 +2,22 @@
 from __future__ import annotations
 
 import re
+import logging
+from functools import partial
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+import anyio
+from fastapi import APIRouter, Depends, File, Request, UploadFile
 from sqlalchemy import or_, select
 from starlette.exceptions import HTTPException
-from starlette.responses import RedirectResponse
+from starlette.responses import FileResponse, RedirectResponse, Response
 from starlette.templating import Jinja2Templates
 
 from ..auth.roles import require_csrf, require_role
 from ..auth.sessions import LoadedSession
+from ..config import get_settings
 from ..db import session_scope
 from ..models import (
     Category,
@@ -36,10 +40,18 @@ from .errors import (
     RecipeNotFound,
     UnknownCategories,
 )
-from .service import create_recipe, delete_recipe, get_recipe, update_recipe
+from .images import InvalidRecipeImage, delete_stored_image, resolve_stored_image, store_image
+from .service import (
+    create_recipe,
+    delete_recipe,
+    get_recipe,
+    set_recipe_image,
+    update_recipe,
+)
 from .validation import RecipeValidationError, validate_for_save
 
 router = APIRouter()
+log = logging.getLogger("cookbook.recipes.images")
 templates = Jinja2Templates(directory=Path(__file__).resolve().parent.parent / "templates")
 _editor = require_role("editor")
 _SECTION_FIELD = re.compile(r"^sections\[(\d+)\]\[(heading|kind)\]$")
@@ -82,6 +94,8 @@ def _form_context(
     errors: dict[str, str] | None = None,
     form_values: dict[str, str] | None = None,
     message: str | None = None,
+    image_path: str | None = None,
+    image_message: str | None = None,
     status_code: int = 200,
 ) -> Response:
     response = templates.TemplateResponse(
@@ -97,6 +111,9 @@ def _form_context(
             "errors": errors or {},
             "form_values": form_values or {},
             "message": message,
+            "image_path": image_path,
+            "image_message": image_message,
+            "upload_max_bytes": get_settings().upload_max_bytes,
         },
         status_code=status_code,
     )
@@ -479,7 +496,15 @@ async def edit_recipe_form(
         )
         selected_category_ids = {category.id for category in details.categories}
         slug = details.recipe.slug
+        image_path = details.recipe.image_path
         recipe_id = details.recipe.id
+    image_state = request.query_params.get("image")
+    image_messages = {
+        "saved": "Recipe image saved.",
+        "removed": "Recipe image removed.",
+        "invalid": "Upload a valid JPEG, PNG, or WebP image within the size limit.",
+        "storage_error": "The image could not be stored. Your existing image is unchanged.",
+    }
     return _form_context(
         request,
         draft=draft,
@@ -489,6 +514,8 @@ async def edit_recipe_form(
         recipe_id=recipe_id,
         slug=slug,
         message="Recipe saved." if request.query_params.get("saved") == "1" else None,
+        image_path=image_path,
+        image_message=image_messages.get(image_state),
     )
 
 
@@ -508,8 +535,13 @@ async def delete_recipe_form(
     recipe_id: str,
     editor: User = Depends(_editor),
 ):
+    image_path: str | None = None
     try:
         async with session_scope() as db:
+            recipe = await db.get(Recipe, recipe_id)
+            if recipe is None:
+                raise RecipeNotFound(recipe_id)
+            image_path = recipe.image_path
             await delete_recipe(db, recipe_id)
     except RecipeNotFound as exc:
         raise HTTPException(status_code=404, detail="Recipe not found") from exc
@@ -534,7 +566,107 @@ async def delete_recipe_form(
             csrf_token=_csrf_token(request),
             recipe_id=recipe_id,
             slug=slug,
+            image_path=details.recipe.image_path,
             errors={"delete": "This recipe has saved URL aliases and cannot be deleted."},
             status_code=409,
         )
+    await _remove_image_best_effort(image_path)
     return RedirectResponse("/edit?deleted=1", status_code=303)
+
+
+async def _remove_image_best_effort(relative_path: str | None) -> None:
+    if not relative_path:
+        return
+    try:
+        await anyio.to_thread.run_sync(
+            delete_stored_image, get_settings().media_dir, relative_path
+        )
+    except OSError as exc:
+        log.warning("recipe image cleanup failed: %s", type(exc).__name__)
+
+
+@router.post("/recipes/{recipe_id}/image", dependencies=[Depends(require_csrf)])
+async def upload_recipe_image(
+    request: Request,
+    recipe_id: str,
+    image: UploadFile = File(...),
+    editor: User = Depends(_editor),
+):
+    settings = request.app.state.settings
+    if image.size is not None and image.size > settings.upload_max_bytes:
+        await image.close()
+        raise HTTPException(status_code=413, detail="Image upload is too large")
+    content = await image.read(settings.upload_max_bytes + 1)
+    await image.close()
+    if len(content) > settings.upload_max_bytes:
+        raise HTTPException(status_code=413, detail="Image upload is too large")
+
+    try:
+        stored = await anyio.to_thread.run_sync(
+            partial(
+                store_image,
+                content,
+                settings.media_dir,
+                max_bytes=settings.upload_max_bytes,
+            )
+        )
+    except InvalidRecipeImage:
+        return RedirectResponse(
+            f"/recipes/{recipe_id}/edit?image=invalid", status_code=303
+        )
+    except OSError as exc:
+        log.warning("recipe image write failed: %s", type(exc).__name__)
+        return RedirectResponse(
+            f"/recipes/{recipe_id}/edit?image=storage_error", status_code=303
+        )
+
+    try:
+        async with session_scope() as db:
+            previous_path = await set_recipe_image(db, recipe_id, stored.relative_path)
+    except RecipeNotFound as exc:
+        await _remove_image_best_effort(stored.relative_path)
+        raise HTTPException(status_code=404, detail="Recipe not found") from exc
+    except Exception:
+        await _remove_image_best_effort(stored.relative_path)
+        raise
+
+    if previous_path:
+        await _remove_image_best_effort(previous_path)
+    return RedirectResponse(
+        f"/recipes/{recipe_id}/edit?image=saved", status_code=303
+    )
+
+
+@router.post("/recipes/{recipe_id}/image/remove", dependencies=[Depends(require_csrf)])
+async def remove_recipe_image(
+    request: Request,
+    recipe_id: str,
+    editor: User = Depends(_editor),
+):
+    try:
+        async with session_scope() as db:
+            previous_path = await set_recipe_image(db, recipe_id, None)
+    except RecipeNotFound as exc:
+        raise HTTPException(status_code=404, detail="Recipe not found") from exc
+    await _remove_image_best_effort(previous_path)
+    return RedirectResponse(
+        f"/recipes/{recipe_id}/edit?image=removed", status_code=303
+    )
+
+
+@router.get("/media/{image_path:path}")
+async def serve_recipe_image(request: Request, image_path: str):
+    settings = request.app.state.settings
+    image = await anyio.to_thread.run_sync(
+        resolve_stored_image, settings.media_dir, image_path
+    )
+    if image is None:
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(
+        image.path,
+        media_type=image.media_type,
+        headers={
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )

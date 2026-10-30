@@ -4,7 +4,7 @@
 
 - Repository: `https://github.com/bjmaynard01/cookbook-app`.
 - Work on the permanent `dev` branch and push to `origin/dev`; `main` is the stable integration branch. Merge tested milestones from `dev` into `main`.
-- Task 10 (editor dashboard and recipe CRUD) is implemented on `main`. New work proceeds from `dev`.
+- Tasks 10 and 11 are implemented and integrated on `main`; new work proceeds on `dev`.
 - The full v1 task list and current statuses are in [`BUILD-ROADMAP.md`](BUILD-ROADMAP.md).
 - Check live Git state before acting; this file is a maintained snapshot, not a replacement for Git.
 
@@ -14,11 +14,13 @@ The backend foundation includes the recipe data model, browser and CLI owner set
 
 The shared `RecipeDraft` contract and save-readiness validation preserve ordered sections and source ingredient text. The editor dashboard at `/edit` supports text, category, and tag filters and sorting. Editors can create, edit, and delete recipes using the shared server-rendered form. Recipe aliases protect existing URLs from deletion, and private editor responses use `private, no-store`.
 
-Task 10 verification passed **456 tests** against disposable MariaDB, plus Python compilation and whitespace checks. One existing Starlette/httpx deprecation warning remains. No schema migration was added for Task 10.
+Editors can upload, replace, and remove JPEG, PNG, or WebP recipe images. Pillow validates image contents; originals are stored under generated names on `MEDIA_DIR`, safely served from `/media/`, and removed after the database update commits. Uploads default to a 10 MiB limit.
+
+Task 11 verification passed **469 tests** against disposable MariaDB, and the Docker image built successfully. One existing Starlette/httpx deprecation warning remains. No schema migration was added for Tasks 10 or 11.
 
 ## Remaining product work
 
-Recipe image storage is the next task, followed by safe URL ingestion, deterministic parsing, optional LLM fallback, ingest review/save, public recipe pages, browse/search, WordPress migration, and backup/restore/cutover verification. See the roadmap for task boundaries and dependencies.
+Safe URL fetching and page extraction is next, followed by deterministic parsing, optional LLM fallback, ingest review/save, public recipe pages, browse/search, WordPress migration, and backup/restore/cutover verification. See the roadmap for task boundaries and dependencies.
 
 ## Local Windows development data
 

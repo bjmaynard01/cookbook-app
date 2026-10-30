@@ -10,6 +10,7 @@
     textarea, select, input[type="number"], input[type="text"] { width:100%; padding:.55rem; border:1px solid #c9c5bf; border-radius:5px; font:inherit; margin:.25rem 0 .75rem; }
     textarea { min-height:5rem; }
     .category-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:.4rem; }
+    .image-preview { display:block; max-width:100%; max-height:320px; border-radius:8px; margin:.5rem 0 1rem; }
     .category-list label, .line-row label { font-weight:400; }
     .category-list input { width:auto; margin:0 .4rem 0 0; }
     .line-row { border-top:1px solid #eee; padding:.5rem 0; }
@@ -78,6 +79,22 @@
     </div>
     <div class="actions"><button type="submit">Save recipe</button><a href="/edit">Cancel</a></div>
 </form>
+{% if recipe_id %}
+<section class="image-panel" aria-labelledby="recipe-image-heading">
+    <h3 id="recipe-image-heading">Recipe image</h3>
+    {% if image_message %}<p role="status" class="muted">{{ image_message }}</p>{% endif %}
+    {% if image_path %}<img class="image-preview" src="/media/{{ image_path }}" alt="Image for {{ draft.title }}">{% else %}<p class="muted">No image added yet.</p>{% endif %}
+    <form method="post" action="/recipes/{{ recipe_id }}/image" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>Upload or replace image<input type="file" name="image" accept="image/jpeg,image/png,image/webp" required></label>
+        <small>JPEG, PNG, or WebP. Maximum {{ upload_max_bytes|filesizeformat }}.</small>
+        <button type="submit">Upload image</button>
+    </form>
+    {% if image_path %}<form method="post" action="/recipes/{{ recipe_id }}/image/remove">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="secondary">Remove image</button>
+    </form>{% endif %}
+</section>
+{% else %}<p class="muted">Save the recipe before adding an image.</p>{% endif %}
 {% if recipe_id %}<form method="post" action="/recipes/{{ recipe_id }}/delete" onsubmit="return confirm('Delete this recipe?')">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="danger">Delete recipe</button>
 </form>{% endif %}

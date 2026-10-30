@@ -4,9 +4,9 @@
 
 - Repository: `https://github.com/bjmaynard01/cookbook-app`.
 - Permanent integration workflow: `dev` is the active development branch; `main` is the stable integration branch.
-- Task 10 (editor dashboard and recipe CRUD) is implemented and pushed to `main`. Its implementation and the initial roadmap are in commit `331a5ec`.
-- `docs/BUILD-ROADMAP.md` is the task sheet for the current v1 scope. Tasks 1–10 are complete; Task 11 (recipe image storage) is next.
-- The last full isolated test run passed **456 tests**, with one existing Starlette/httpx deprecation warning.
+- Tasks 10 and 11 are implemented and integrated on `main`; `dev` remains the active development branch.
+- `docs/BUILD-ROADMAP.md` is the task sheet for the current v1 scope. Tasks 1–11 are complete; Task 12 (safe URL fetch and page extraction) is next.
+- Task 11 full isolated suite: **469 passed**, with one existing Starlette/httpx deprecation warning. The Docker image also built successfully.
 - Check live Git state before acting; this file is a maintained snapshot, not a replacement for Git.
 
 ## Working agreement
