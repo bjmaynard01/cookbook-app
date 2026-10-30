@@ -15,6 +15,7 @@ from .auth import admin_routes, routes as auth_routes
 from .auth.middleware import AuthMiddleware
 from .config import get_settings
 from .db import get_engine
+from .recipes import routes as recipe_routes
 
 log = logging.getLogger("cookbook")
 _START = time.monotonic()
@@ -85,4 +86,5 @@ def create_app() -> FastAPI:
     app.add_middleware(AuthMiddleware)
     app.include_router(auth_routes.router)
     app.include_router(admin_routes.router)
+    app.include_router(recipe_routes.router)
     return app

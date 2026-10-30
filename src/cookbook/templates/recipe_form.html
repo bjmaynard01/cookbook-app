@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit recipe' if recipe_id else 'New recipe' }} · Cookbook{% endblock %}
+{% block content %}
+<style>
+    .container { max-width:900px; }
+    .form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 1rem; }
+    .full { grid-column:1 / -1; }
+    fieldset { border:1px solid #d9d4cc; border-radius:8px; padding:1rem; margin:1rem 0; background:#fff; }
+    legend { padding:0 .4rem; font-weight:700; }
+    textarea, select, input[type="number"], input[type="text"] { width:100%; padding:.55rem; border:1px solid #c9c5bf; border-radius:5px; font:inherit; margin:.25rem 0 .75rem; }
+    textarea { min-height:5rem; }
+    .category-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:.4rem; }
+    .category-list label, .line-row label { font-weight:400; }
+    .category-list input { width:auto; margin:0 .4rem 0 0; }
+    .line-row { border-top:1px solid #eee; padding:.5rem 0; }
+    .line-row details { margin:.25rem 0 .6rem; }
+    .line-row details label { display:inline-block; width:19%; min-width:120px; vertical-align:top; }
+    .line-row details input { display:block; width:100%; }
+    .actions { display:flex; gap:.75rem; align-items:center; margin:1rem 0; }
+    .secondary { background:#6d6963; }
+    .danger { background:#9b2d2d; }
+    .error { color:#9b2d2d; margin:.1rem 0 .65rem; }
+    .message { padding:.7rem; background:#edf5e9; border:1px solid #c8dfbd; border-radius:6px; }
+    @media(max-width:650px) { .form-grid { grid-template-columns:1fr; } .full { grid-column:auto; } }
+</style>
+<p><a href="/edit">← Back to recipes</a></p>
+<h2>{{ 'Edit recipe' if recipe_id else 'New recipe' }}</h2>
+{% if message %}<p class="message" role="status">{{ message }}</p>{% endif %}
+{% for field, error in errors.items() %}<p class="error" role="alert">{{ error }}</p>{% endfor %}
+<form method="post" action="{{ '/recipes/' ~ recipe_id if recipe_id else '/recipes' }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="form-grid">
+        <label class="full">Title<input type="text" name="title" required maxlength="300" value="{{ form_values.get('title', draft.title) }}"></label>
+        <label class="full">Description<textarea name="description">{{ form_values.get('description', draft.description or '') }}</textarea></label>
+        <label class="full">URL slug<input type="text" name="slug" value="{{ form_values.get('slug', slug) }}" placeholder="Leave blank to generate from title"><small>Changing a saved slug keeps its old route as an alias.</small></label>
+        <fieldset class="full"><legend>Categories</legend>
+            <div class="category-list">{% for category in categories %}<label><input type="checkbox" name="category_ids" value="{{ category.id }}" {% if category.id in selected_category_ids %}checked{% endif %}>{{ category.name }}</label>{% endfor %}</div>
+        </fieldset>
+        <label class="full">Tags <small>(one per line)</small><textarea name="tags">{{ draft.tags|join('\n') }}</textarea></label>
+        <label>Servings text<input type="text" name="servings_text" value="{{ form_values.get('servings_text', draft.servings_text or '') }}"></label>
+        <label>Servings number<input type="number" name="servings_number" step="0.01" value="{{ form_values.get('servings_number', draft.servings_number if draft.servings_number is not none else '') }}"></label>
+        <label>Prep minutes<input type="number" min="0" name="prep_minutes" value="{{ form_values.get('prep_minutes', draft.prep_minutes if draft.prep_minutes is not none else '') }}"></label>
+        <label>Cook minutes<input type="number" min="0" name="cook_minutes" value="{{ form_values.get('cook_minutes', draft.cook_minutes if draft.cook_minutes is not none else '') }}"></label>
+        <label>Total minutes<input type="number" min="0" name="total_minutes" value="{{ form_values.get('total_minutes', draft.total_minutes if draft.total_minutes is not none else '') }}"></label>
+    </div>
+    <h3>Recipe sections</h3>
+    <div id="sections">
+    {% for section in draft.sections %}{% set si = loop.index0 %}
+        <fieldset data-section-index="{{ si }}" data-kind="{{ section.kind }}">
+            <legend>{{ section.kind|title }}</legend>
+            <label>Section heading<input type="text" name="sections[{{ si }}][heading]" value="{{ section.heading }}"></label>
+            <input type="hidden" name="sections[{{ si }}][kind]" value="{{ section.kind }}">
+            <div data-lines>{% for line in section.lines %}{% set li = loop.index0 %}
+                <div class="line-row" data-line-index="{{ li }}">
+                {% if section.kind == 'ingredients' %}
+                    <label>Ingredient text<textarea name="sections[{{ si }}][lines][{{ li }}][raw_text]">{{ line.raw_text }}</textarea></label>
+                    <details><summary>Parsed ingredient details</summary>
+                        <label>Quantity<input type="text" name="sections[{{ si }}][lines][{{ li }}][quantity_text]" value="{{ line.quantity_text or '' }}"></label>
+                        <label>Unit<input type="text" name="sections[{{ si }}][lines][{{ li }}][unit]" value="{{ line.unit or '' }}"></label>
+                        <label>Item<input type="text" name="sections[{{ si }}][lines][{{ li }}][item]" value="{{ line.item or '' }}"></label>
+                        <label>Preparation<input type="text" name="sections[{{ si }}][lines][{{ li }}][preparation]" value="{{ line.preparation or '' }}"></label>
+                    </details>
+                {% else %}
+                    <label>{{ 'Step' if section.kind == 'steps' else 'Note' }} text<textarea name="sections[{{ si }}][lines][{{ li }}][body]">{{ line.body }}</textarea></label>
+                {% endif %}
+                    <button type="button" class="secondary" data-remove-line>Remove line</button>
+                </div>
+            {% endfor %}</div>
+            <button type="button" class="secondary" data-add-line>Add line</button>
+            <button type="button" class="secondary" data-remove-section>Remove section</button>
+        </fieldset>
+    {% endfor %}
+    </div>
+    <div class="actions">
+        <button type="button" class="secondary" data-add-section="ingredients">Add ingredient section</button>
+        <button type="button" class="secondary" data-add-section="steps">Add steps section</button>
+        <button type="button" class="secondary" data-add-section="note">Add note section</button>
+    </div>
+    <div class="actions"><button type="submit">Save recipe</button><a href="/edit">Cancel</a></div>
+</form>
+{% if recipe_id %}<form method="post" action="/recipes/{{ recipe_id }}/delete" onsubmit="return confirm('Delete this recipe?')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="danger">Delete recipe</button>
+</form>{% endif %}
+<template id="section-template"><fieldset data-section-index="__section__" data-kind="__kind__">
+    <legend>__label__</legend><label>Section heading<input type="text" name="sections[__section__][heading]" value="__heading__"></label>
+    <input type="hidden" name="sections[__section__][kind]" value="__kind__"><div data-lines></div>
+    <button type="button" class="secondary" data-add-line>Add line</button><button type="button" class="secondary" data-remove-section>Remove section</button>
+</fieldset></template>
+<template id="ingredient-line-template"><div class="line-row" data-line-index="__line__">
+    <label>Ingredient text<textarea name="sections[__section__][lines][__line__][raw_text]"></textarea></label>
+    <details><summary>Parsed ingredient details</summary><label>Quantity<input name="sections[__section__][lines][__line__][quantity_text]"></label>
+        <label>Unit<input name="sections[__section__][lines][__line__][unit]"></label><label>Item<input name="sections[__section__][lines][__line__][item]"></label>
+        <label>Preparation<input name="sections[__section__][lines][__line__][preparation]"></label></details>
+    <button type="button" class="secondary" data-remove-line>Remove line</button>
+</div></template>
+<template id="text-line-template"><div class="line-row" data-line-index="__line__">
+    <label>Line text<textarea name="sections[__section__][lines][__line__][body]"></textarea></label>
+    <button type="button" class="secondary" data-remove-line>Remove line</button>
+</div></template>
+<script>
+(() => {
+    const root = document.getElementById('sections');
+    const sectionTemplate = document.getElementById('section-template');
+    let nextSection = Math.max(-1, ...Array.from(root.querySelectorAll('[data-section-index]'), el => Number(el.dataset.sectionIndex))) + 1;
+    function addLine(section) {
+        const template = document.getElementById(section.dataset.kind === 'ingredients' ? 'ingredient-line-template' : 'text-line-template');
+        const lines = section.querySelector('[data-lines]');
+        const nextLine = Math.max(-1, ...Array.from(lines.querySelectorAll('[data-line-index]'), el => Number(el.dataset.lineIndex))) + 1;
+        lines.insertAdjacentHTML('beforeend', template.innerHTML.replaceAll('__section__', section.dataset.sectionIndex).replaceAll('__line__', nextLine));
+    }
+    root.addEventListener('click', event => {
+        const section = event.target.closest('[data-section-index]');
+        if (event.target.matches('[data-add-line]')) addLine(section);
+        if (event.target.matches('[data-remove-line]')) event.target.closest('[data-line-index]').remove();
+        if (event.target.matches('[data-remove-section]')) section.remove();
+    });
+    document.querySelectorAll('[data-add-section]').forEach(button => button.addEventListener('click', () => {
+        const kind = button.dataset.addSection, labels = {ingredients:'Ingredients', steps:'Steps', note:'Notes'};
+        const html = sectionTemplate.innerHTML.replaceAll('__section__', nextSection++).replaceAll('__kind__', kind)
+            .replaceAll('__label__', labels[kind]).replaceAll('__heading__', labels[kind]);
+        root.insertAdjacentHTML('beforeend', html); addLine(root.lastElementChild);
+    }));
+})();
+</script>
+{% endblock %}
