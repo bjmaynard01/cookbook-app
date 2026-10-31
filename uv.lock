@@ -275,6 +275,7 @@ dependencies = [
     { name = "argon2-cffi" },
     { name = "asyncmy" },
     { name = "fastapi" },
+    { name = "httpcore" },
     { name = "httpx" },
     { name = "jinja2" },
     { name = "pillow" },
