@@ -1,6 +1,7 @@
 """Extract bounded, non-recipe-specific metadata from fetched HTML."""
 from __future__ import annotations
 
+import re
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
 
@@ -8,6 +9,11 @@ from .ingest import FetchedPage
 
 
 _HIDDEN_TAGS = {"head", "script", "style", "noscript", "template", "svg", "iframe"}
+_COOKIE_BANNER = re.compile(
+    r"(?:cookie|consent|privacy)[\w -]{0,32}(?:banner|notice|dialog|prompt|popup)"
+    r"|(?:banner|notice|dialog|prompt|popup)[\w -]{0,32}(?:cookie|consent|privacy)",
+    re.IGNORECASE,
+)
 _BLOCK_TAGS = {
     "address", "article", "blockquote", "br", "dd", "div", "dl", "dt", "fieldset",
     "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6",
@@ -78,9 +84,15 @@ class _PageParser(HTMLParser):
             self._script_is_json_ld = script_type == "application/ld+json"
             self._script_parts = []
 
-        hidden = tag in _HIDDEN_TAGS or values.get("hidden") is not None or values.get(
-            "aria-hidden", ""
-        ).casefold() == "true"
+        selectors = f"{values.get('id', '')} {values.get('class', '')}"
+        hidden = (
+            tag in _HIDDEN_TAGS
+            or tag == "nav"
+            or values.get("role", "").casefold() == "navigation"
+            or _COOKIE_BANNER.search(selectors) is not None
+            or values.get("hidden") is not None
+            or values.get("aria-hidden", "").casefold() == "true"
+        )
         if hidden:
             self._hidden.append(tag)
         if tag in _BLOCK_TAGS and not self._hidden:

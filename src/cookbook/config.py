@@ -73,6 +73,15 @@ class Settings(BaseSettings):
     db_password: str | None = Field(default=None, alias="DB_PASSWORD", repr=False)
     db_password_file: Path | None = Field(default=None, alias="DB_PASSWORD_FILE")
 
+    # --- optional web-ingest LLM fallback ---
+    llm_base_url: str | None = Field(default=None, alias="LLM_BASE_URL")
+    llm_model: str | None = Field(default=None, alias="LLM_MODEL")
+    llm_api_key: str | None = Field(default=None, alias="LLM_API_KEY", repr=False)
+    llm_api_key_file: Path | None = Field(default=None, alias="LLM_API_KEY_FILE")
+    llm_timeout_seconds: float = Field(
+        default=10, alias="LLM_TIMEOUT_SECONDS", gt=0, le=10
+    )
+
     # --- bootstrap owner account (CLI) ---
     first_admin_password: str | None = Field(default=None, alias="FIRST_ADMIN_PASSWORD", repr=False)
     first_admin_password_file: Path | None = Field(default=None, alias="FIRST_ADMIN_PASSWORD_FILE")

@@ -1,10 +1,10 @@
 # Cookbook App Build Roadmap
 
 **Source of truth:** `PRODUCT.md` and the approved design in `docs/superpowers/specs/2026-09-20-cookbook-design.md`.
-**Updated:** 2026-10-31
+**Updated:** 2026-11-04
 **Planned scope:** 20 delivery tasks. Task boundaries can be revised if the owner changes product scope; this count covers the current v1 specification.
 
-This roadmap gives the project one ordered task sheet. Each task may have a separate design and implementation plan. Tasks 1–13 are complete; Task 14 is next. No task adds features explicitly excluded from the approved v1 spec.
+This roadmap gives the project one ordered task sheet. Each task may have a separate design and implementation plan. Tasks 1–14 are complete; Task 15 is next. No task adds features explicitly excluded from the approved v1 spec.
 
 ## Branch workflow
 
@@ -27,7 +27,7 @@ This roadmap gives the project one ordered task sheet. Each task may have a sepa
 | 11 | Recipe image storage | Complete | Validated local JPEG/PNG/WebP uploads, safe serving, replacement/removal, and post-commit cleanup. [Design](superpowers/specs/2026-10-30-recipe-image-storage-design.md) |
 | 12 | Safe URL fetch and page extraction | Complete | Public-URL validation, DNS-pinned SSRF defenses, bounded HTTP fetches, and HTML/JSON-LD extraction. [Plan](superpowers/plans/2026-10-31-safe-url-fetch.md) |
 | 13 | Deterministic recipe parsing | Complete | JSON-LD candidate selection and microdata fallback into the shared `RecipeDraft`. [Plan](superpowers/plans/2026-10-31-deterministic-parsing.md) |
-| 14 | Optional LLM parsing fallback | Planned | Configurable OpenAI-compatible fallback with bounded time and no-key behavior. |
+| 14 | Optional LLM parsing fallback | Complete | Optional OpenAI-compatible fallback with strict `RecipeDraft` validation, a 10-second cap, and safe no-key behavior. [Plan](superpowers/plans/2026-11-02-llm-parsing-fallback.md) |
 | 15 | Ingest review and save flow | Planned | Dashboard URL launcher, distinct ingest states, and landing in the same recipe form. |
 | 16 | Public recipe page and legacy redirects | Planned | Readable `/r/<slug>` pages and alias redirects with preserved old links. |
 | 17 | Home, category, and tag browsing | Planned | Public navigation and recipe lists across the specified browse surfaces. |
@@ -37,7 +37,7 @@ This roadmap gives the project one ordered task sheet. Each task may have a sepa
 
 ## Order and dependencies
 
-Tasks 1–9 establish the schema, security, draft contract, and persistence layer. Task 10 uses those services to create the first editor workflow. Task 11 supplies image storage to both manual editing and later ingestion/import. Tasks 12–15 build ingestion in bounded stages. Task 12 safely fetches public HTML and extracts metadata, visible text, and raw JSON-LD blocks; Task 13 interprets recipe JSON-LD and microdata; Task 14 adds the optional LLM fallback; and Task 15 connects ingestion to the review and save form. Tasks 16–18 implement the public reading and discovery experience. Task 19 migrates the existing collection only after its discovery spike. Task 20 verifies restore and cutover requirements after the product surfaces and importer are complete.
+Tasks 1–9 establish the schema, security, draft contract, and persistence layer. Task 10 uses those services to create the first editor workflow. Task 11 supplies image storage to both manual editing and later ingestion/import. Tasks 12–15 build ingestion in bounded stages. Task 12 safely fetches public HTML and extracts metadata, visible text, and raw JSON-LD blocks; Task 13 interprets recipe JSON-LD and microdata; Task 14 adds the optional 10-second LLM fallback; and Task 15 connects ingestion to the review and save form. Tasks 16–18 implement the public reading and discovery experience. Task 19 migrates the existing collection only after its discovery spike. Task 20 verifies restore and cutover requirements after the product surfaces and importer are complete.
 
 ## Completion gates
 

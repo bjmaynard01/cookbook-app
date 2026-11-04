@@ -15,7 +15,11 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     OUT of the repo root so Settings (env_file='.env', relative) cannot pick up
     the local .env. Env vars are the sole config source in these tests."""
     for var in list(os.environ):
-        if var.startswith(("DB_", "SECRET_", "APP_", "DEBUG", "MEDIA_", "ALLOWED_", "UPLOAD_", "TRUSTED_PROXY", "COOKIE_")):
+        prefixes = (
+            "DB_", "SECRET_", "APP_", "DEBUG", "MEDIA_", "ALLOWED_", "UPLOAD_",
+            "TRUSTED_PROXY", "COOKIE_", "LLM_",
+        )
+        if var.startswith(prefixes):
             monkeypatch.delenv(var, raising=False)
     monkeypatch.chdir(tmp_path)
     config_mod.get_settings.cache_clear()
@@ -57,6 +61,30 @@ def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.db_user == "cookbook"
     assert s.media_dir == Path("/media")
     assert s.session_ttl_hours == 12
+    assert s.llm_base_url is None
+    assert s.llm_model is None
+    assert s.llm_api_key is None
+    assert s.llm_api_key_file is None
+    assert s.llm_timeout_seconds == 10
+
+
+def test_llm_timeout_cannot_exceed_product_cap() -> None:
+    with pytest.raises(ValueError):
+        Settings(LLM_TIMEOUT_SECONDS=11)
+
+
+def test_llm_api_key_file_setting_is_loaded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key_file = tmp_path / "llm-key"
+    key_file.write_text("file-key\nignored second line\n", encoding="utf-8")
+    monkeypatch.setenv("LLM_API_KEY_FILE", str(key_file))
+    monkeypatch.setenv("LLM_API_KEY", "plain-key")
+
+    settings = Settings()
+
+    assert settings.llm_api_key_file == key_file
+    assert settings.llm_api_key == "plain-key"
 
 
 def test_from_secret_file_first_line(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

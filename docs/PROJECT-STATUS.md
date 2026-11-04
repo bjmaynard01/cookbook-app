@@ -1,10 +1,10 @@
-# Project status — 2026-10-31
+# Project status — 2026-11-04
 
 ## Repository and task state
 
 - Repository: `https://github.com/bjmaynard01/cookbook-app`.
 - Work on the permanent `dev` branch and push to `origin/dev`; `main` is the stable integration branch. Merge tested milestones from `dev` into `main`.
-- Tasks 10–13 are implemented and integrated on `main`; new work proceeds on `dev`.
+- Tasks 10–14 are implemented and integrated on `main`; new work proceeds on `dev`.
 - The full v1 task list and current statuses are in [`BUILD-ROADMAP.md`](BUILD-ROADMAP.md).
 - Check live Git state before acting; this file is a maintained snapshot, not a replacement for Git.
 
@@ -18,11 +18,13 @@ Editors can upload, replace, and remove JPEG, PNG, or WebP recipe images. Pillow
 
 Recipe source URLs are fetched only over HTTP(S) after rejecting non-public DNS answers; connections use a validated, pinned IP and each of up to five redirects is checked again. Fetches have a 20-second deadline and 5 MiB compressed and decoded body caps. HTML extraction returns page metadata, visible text, and raw JSON-LD blocks. Deterministic parsing checks all JSON-LD blocks first, selects the richest supported Recipe candidate, then falls back to schema.org microdata. It preserves ingredient source text and emits sparse drafts with conservative best-effort splits and parse notes.
 
-Task 13 verification passed **523 tests** against disposable tmpfs MariaDB, and the Docker image built successfully. The focused parser suite passed **19 tests**. One existing Starlette/httpx deprecation warning remains. No schema migration was added for Tasks 10–13.
+The optional LLM fallback runs only when deterministic parsing has no ingredient or step content, or its ingredient data is obviously incomplete. It sends at most 24,000 characters of cleaned visible text to the configured OpenAI-compatible chat-completions endpoint at temperature zero, validates the response against `RecipeDraft`, and stamps source provenance locally. Missing or unreadable keys, provider failures, invalid output, and timeouts retain the deterministic draft and add a parse note. The async parser is ready for Task 15 to connect to the editor's ingest/review flow.
+
+Task 14 verification passed **541 tests** against disposable tmpfs MariaDB, and the Docker image built successfully. The focused parser/config/extraction suite passed **56 tests**. One existing Starlette/httpx deprecation warning remains. No schema migration was added for Tasks 10–14.
 
 ## Remaining product work
 
-Optional LLM parsing fallback is next, followed by ingest review/save, public recipe pages, browse/search, WordPress migration, and backup/restore/cutover verification. See the roadmap for task boundaries and dependencies.
+Editor ingest review/save is next, followed by public recipe pages, browse/search, WordPress migration, and backup/restore/cutover verification. See the roadmap for task boundaries and dependencies.
 
 ## Local Windows development data
 

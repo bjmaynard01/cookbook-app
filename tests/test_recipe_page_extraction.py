@@ -81,3 +81,17 @@ def test_extract_page_ignores_hostile_base_tag_for_relative_metadata() -> None:
     )
 
     assert page.og_image == "https://recipes.example/pie.jpg"
+
+
+def test_extract_page_removes_navigation_and_cookie_banner_from_visible_text() -> None:
+    page = extract_page(
+        """<nav>Home Recipes About</nav>
+        <div class="cookie-consent-banner">We use cookies. Accept all.</div>
+        <main><h1>Sunday Pie</h1><p>Mix and bake.</p></main>""",
+        source_url="https://recipes.example/pie",
+        final_url="https://recipes.example/pie",
+        status_code=200,
+        content_type="text/html",
+    )
+
+    assert page.visible_text == "Sunday Pie Mix and bake."

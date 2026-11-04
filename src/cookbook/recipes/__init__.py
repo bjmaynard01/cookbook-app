@@ -16,6 +16,7 @@ from .errors import (
     UnknownCategories,
 )
 from .ingest import FetchError, FetchedPage, UnsafeURLError, fetch_page
+from .llm import parse_recipe_page_with_fallback
 from .parsing import parse_recipe_page
 from .records import RecipeDetails, RecipeSectionDetails
 from .service import create_recipe, delete_recipe, get_recipe, set_recipe_image, update_recipe
@@ -46,6 +47,7 @@ __all__ = [
     "delete_recipe",
     "get_recipe",
     "parse_recipe_page",
+    "parse_recipe_page_with_fallback",
     "fetch_page",
     "set_recipe_image",
     "update_recipe",
