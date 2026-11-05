@@ -17,6 +17,8 @@ from .auth import admin_routes, routes as auth_routes
 from .auth.middleware import AuthMiddleware
 from .config import get_settings
 from .db import get_engine
+from .recipes import public_routes
+from .recipes.legacy_aliases import LegacyAliasMiddleware
 from .recipes import routes as recipe_routes
 
 log = logging.getLogger("cookbook")
@@ -93,8 +95,10 @@ def create_app() -> FastAPI:
     app.state.settings = settings
     # Task 7.5: auth routes read app.state.settings at request time, so the
     # assignment above just needs to hold before the first request lands.
+    app.add_middleware(LegacyAliasMiddleware)
     app.add_middleware(AuthMiddleware)
     app.include_router(auth_routes.router)
     app.include_router(admin_routes.router)
     app.include_router(recipe_routes.router)
+    app.include_router(public_routes.router)
     return app

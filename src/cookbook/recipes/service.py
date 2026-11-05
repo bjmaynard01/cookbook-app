@@ -948,4 +948,17 @@ async def get_recipe(
     )
 
 
-__all__ = ["create_recipe", "get_recipe"]
+async def get_recipe_by_slug(
+    db: AsyncSession,
+    slug: str,
+) -> RecipeDetails | None:
+    """Aggregate read for a public recipe slug; ``None`` if absent."""
+    recipe_id = (
+        await db.execute(select(Recipe.id).where(Recipe.slug == slug).limit(1))
+    ).scalar_one_or_none()
+    if recipe_id is None:
+        return None
+    return await get_recipe(db, recipe_id)
+
+
+__all__ = ["create_recipe", "get_recipe", "get_recipe_by_slug"]

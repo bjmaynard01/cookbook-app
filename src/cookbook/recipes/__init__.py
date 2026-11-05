@@ -19,7 +19,14 @@ from .ingest import FetchError, FetchedPage, UnsafeURLError, fetch_page
 from .llm import parse_recipe_page_with_fallback
 from .parsing import parse_recipe_page
 from .records import RecipeDetails, RecipeSectionDetails
-from .service import create_recipe, delete_recipe, get_recipe, set_recipe_image, update_recipe
+from .service import (
+    create_recipe,
+    delete_recipe,
+    get_recipe,
+    get_recipe_by_slug,
+    set_recipe_image,
+    update_recipe,
+)
 from .validation import RecipeSaveData, RecipeValidationError, ValidationWarning, validate_for_save
 
 __all__ = [
@@ -46,6 +53,7 @@ __all__ = [
     "create_recipe",
     "delete_recipe",
     "get_recipe",
+    "get_recipe_by_slug",
     "parse_recipe_page",
     "parse_recipe_page_with_fallback",
     "fetch_page",

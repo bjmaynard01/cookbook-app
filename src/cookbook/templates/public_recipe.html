@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}{{ recipe.title }} · Cookbook{% endblock %}
+{% block head %}
+<style>
+  .container { max-width: none; padding: 0; }
+  .recipe-page { max-width: 76rem; margin: 0 auto; padding: 1.5rem 1rem 5rem; color: #25241f; }
+  .recipe-page a { color: #285e4c; }
+  .recipe-breadcrumb { margin: 0 0 .6rem; font-size: .92rem; }
+  .recipe-heading { display: block; max-width: 54rem; margin: 0 auto 1.5rem; text-align: center; }
+  .recipe-heading h1 { margin: .3rem 0 .65rem; font-size: clamp(2rem, 5vw, 3.5rem); line-height: 1.08; }
+  .recipe-description { margin: 0 auto 1rem; max-width: 42rem; color: #54524a; font-size: 1.1rem; line-height: 1.6; }
+  .recipe-meta { display: flex; justify-content: center; flex-wrap: wrap; gap: .5rem 1.4rem; margin: 1rem 0; }
+  .recipe-meta div { display: flex; gap: .35rem; }
+  .recipe-meta dt { font-weight: 650; }
+  .recipe-hero { display: block; max-width: 100%; max-height: 34rem; object-fit: cover; margin: 1.5rem auto 2rem; border-radius: .8rem; }
+  .recipe-body { display: grid; grid-template-columns: minmax(0, 38fr) minmax(0, 62fr); gap: clamp(1.5rem, 4vw, 4rem); align-items: start; }
+  .recipe-column h2, .recipe-notes h2 { margin: 0 0 1rem; font-size: 1.5rem; }
+  .recipe-section { margin: 0 0 1.5rem; }
+  .recipe-section h3 { margin: 0 0 .6rem; color: #514e45; font-size: 1rem; }
+  .ingredient-list, .step-list { padding-left: 1.35rem; margin: 0; }
+  .ingredient-list li, .step-list li { padding: 0 0 .7rem .25rem; line-height: 1.55; }
+  .recipe-notes { margin: 2rem 0 0; padding-top: 1.5rem; border-top: 1px solid #dedbd2; }
+  .recipe-chips { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 1.5rem; }
+  .recipe-chip { display: inline-block; padding: .3rem .7rem; border: 1px solid #d2d0c7; border-radius: 999px; text-decoration: none; font-size: .9rem; }
+  .recipe-source { margin: 2rem 0 0; color: #76736a; font-size: .88rem; }
+  .sticky-strip { position: fixed; z-index: 5; inset: 0 0 auto; display: none; padding: .7rem 1rem; background: #f5f2e9; border-bottom: 1px solid #dedbd2; box-shadow: 0 2px 9px #25241f18; }
+  .sticky-strip.visible { display: flex; justify-content: space-between; gap: 1rem; }
+  .back-to-top { position: fixed; right: 1rem; bottom: 1rem; z-index: 5; padding: .65rem .9rem; color: #fff !important; background: #285e4c; border-radius: 999px; text-decoration: none; box-shadow: 0 2px 8px #25241f30; }
+  @media (max-width: 680px) {
+    .recipe-page { padding-top: 1rem; }
+    .recipe-body { grid-template-columns: minmax(0, 1fr); gap: 2rem; }
+    .recipe-ingredients { order: 1; }
+    .recipe-steps { order: 2; }
+    .recipe-heading h1 { font-size: 2.15rem; }
+    .sticky-strip { font-size: .9rem; }
+  }
+  @media print {
+    .container > header, nav, .sticky-strip, .back-to-top { display: none !important; }
+    .recipe-page { max-width: none; padding: 0; }
+    .recipe-heading { text-align: left; margin: 0 0 1rem; }
+    .recipe-heading h1 { font-size: 2rem; }
+    .recipe-body { display: block; }
+    .recipe-column, .recipe-notes { break-inside: avoid; }
+    .recipe-chips { display: none; }
+    .recipe-chip { color: inherit; background: transparent; }
+    .recipe-hero { max-height: 12rem; margin: .5rem 0 1rem; }
+    a { color: inherit !important; text-decoration: none; }
+  }
+</style>
+{% endblock %}
+{% block content %}
+<div id="top" class="recipe-page">
+  {% if details.categories %}
+  <p class="recipe-breadcrumb"><a href="/c/{{ details.categories[0].slug }}">{{ details.categories[0].name }}</a></p>
+  {% endif %}
+  <header class="recipe-heading" id="recipe-header">
+    <h1>{{ recipe.title }}</h1>
+    {% if recipe.description %}<p class="recipe-description">{{ recipe.description }}</p>{% endif %}
+    <dl class="recipe-meta">
+      {% if recipe.servings_text %}<div><dt>Serves</dt><dd>{{ recipe.servings_text }}</dd></div>
+      {% elif recipe.servings_number is not none %}<div><dt>Serves</dt><dd>{{ recipe.servings_number }}</dd></div>{% endif %}
+      {% if recipe.prep_minutes %}<div><dt>Prep</dt><dd>{{ recipe.prep_minutes }} min</dd></div>{% endif %}
+      {% if recipe.cook_minutes %}<div><dt>Cook</dt><dd>{{ recipe.cook_minutes }} min</dd></div>{% endif %}
+      {% if recipe.total_minutes %}<div><dt>Total</dt><dd>{{ recipe.total_minutes }} min</dd></div>{% endif %}
+    </dl>
+  </header>
+  {% if image_url %}<img class="recipe-hero" src="{{ image_url }}" alt="{{ recipe.title }}">{% endif %}
+  <div class="recipe-body">
+    <section class="recipe-column recipe-ingredients" id="ingredients-section" aria-labelledby="ingredients-title">
+      <h2 id="ingredients-title">Ingredients</h2>
+      {% for section in ingredient_sections %}
+      <div class="recipe-section">
+        {% if section.section.heading %}<h3>{{ section.section.heading }}</h3>{% endif %}
+        <ul class="ingredient-list">
+          {% for item in section.items %}<li>{{ ingredient_text(item) }}</li>{% endfor %}
+        </ul>
+      </div>
+      {% endfor %}
+    </section>
+    <section class="recipe-column recipe-steps" id="steps-section" aria-labelledby="steps-title">
+      <h2 id="steps-title">Instructions</h2>
+      {% for section in step_sections %}
+      <div class="recipe-section">
+        {% if section.section.heading %}<h3>{{ section.section.heading }}</h3>{% endif %}
+        <ol class="step-list">
+          {% for item in section.items %}<li>{{ item.raw_text }}</li>{% endfor %}
+        </ol>
+      </div>
+      {% endfor %}
+    </section>
+  </div>
+  {% if note_sections %}
+  <section class="recipe-notes" aria-labelledby="notes-title">
+    <h2 id="notes-title">Notes</h2>
+    {% for section in note_sections %}
+    <div class="recipe-section">
+      {% if section.section.heading %}<h3>{{ section.section.heading }}</h3>{% endif %}
+      {% for item in section.items %}<p>{{ item.raw_text }}</p>{% endfor %}
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+  <div class="recipe-chips" aria-label="Recipe categories and tags">
+    {% for category in details.categories %}<a class="recipe-chip" href="/c/{{ category.slug }}">{{ category.name }}</a>{% endfor %}
+    {% for tag in details.tags %}<a class="recipe-chip" href="/t/{{ tag.slug }}">{{ tag.name }}</a>{% endfor %}
+  </div>
+  {% if source_name %}<p class="recipe-source">From {% if source_url %}<a href="{{ source_url }}" rel="nofollow noopener noreferrer">{{ source_name }}</a>{% else %}{{ source_name }}{% endif %}</p>{% endif %}
+</div>
+<div class="sticky-strip" id="sticky-strip" aria-live="polite"><strong>{{ recipe.title }}</strong><span id="current-section">Ingredients</span></div>
+<a class="back-to-top" href="#top" aria-label="Back to top">Top ↑</a>
+<script>
+  (() => {
+    const strip = document.getElementById("sticky-strip");
+    const title = document.getElementById("recipe-header");
+    const current = document.getElementById("current-section");
+    if (!strip || !title || !current || !("IntersectionObserver" in window)) return;
+    new IntersectionObserver(([entry]) => strip.classList.toggle("visible", !entry.isIntersecting)).observe(title);
+    const sections = [
+      [document.getElementById("ingredients-section"), "Ingredients"],
+      [document.getElementById("steps-section"), "Instructions"]
+    ].filter(([element]) => element);
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+      if (visible) current.textContent = sections.find(([element]) => element === visible.target)?.[1] || "Recipe";
+    }, { rootMargin: "-15% 0px -70% 0px" });
+    sections.forEach(([element]) => observer.observe(element));
+  })();
+</script>
+{% endblock %}
