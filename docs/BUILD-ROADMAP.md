@@ -4,7 +4,7 @@
 **Updated:** 2026-11-05
 **Planned scope:** 20 delivery tasks. Task boundaries can be revised if the owner changes product scope; this count covers the current v1 specification.
 
-This roadmap gives the project one ordered task sheet. Each task may have a separate design and implementation plan. Tasks 1–16 are complete; Task 17 is next. No task adds features explicitly excluded from the approved v1 spec.
+This roadmap gives the project one ordered task sheet. Each task may have a separate design and implementation plan. Tasks 1–17 are complete; Task 18 is next. No task adds features explicitly excluded from the approved v1 spec.
 
 ## Branch workflow
 
@@ -30,7 +30,7 @@ This roadmap gives the project one ordered task sheet. Each task may have a sepa
 | 14 | Optional LLM parsing fallback | Complete | Optional OpenAI-compatible fallback with strict `RecipeDraft` validation, a 10-second cap, and safe no-key behavior. [Plan](superpowers/plans/2026-11-02-llm-parsing-fallback.md) |
 | 15 | Ingest review and save flow | Complete | Dashboard URL launcher, four review states in the shared form, provenance, duplicate notice, bounded image save, and a four-job ingest pool. [Plan](superpowers/plans/2026-11-05-ingest-review-save.md) |
 | 16 | Public recipe page and legacy redirects | Complete | Anonymous responsive `/r/<slug>` reading pages and exact stored-alias 301 redirects. [Plan](superpowers/plans/2026-11-05-public-recipe-page.md) |
-| 17 | Home, category, and tag browsing | Planned | Public navigation and recipe lists across the specified browse surfaces. |
+| 17 | Home, category, and tag browsing | Complete | Featured home index, ordered category/tag lanes, and public recipe lists with category time/tag narrowing. [Plan](superpowers/plans/2026-11-05-public-browsing.md) |
 | 18 | Search and result filtering | Planned | Full-text search, ranking, time/tag filters, and useful empty states. |
 | 19 | WordPress migration importer | Planned | Discovery spike, idempotent WXR import, media transfer, aliases, audit, and verification report. |
 | 20 | Backup, restore, and production cutover gate | Planned | Explicit-target backup/restore tooling and the required isolated restore and migration verification. |

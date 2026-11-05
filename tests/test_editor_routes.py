@@ -514,8 +514,9 @@ def test_editor_and_admin_can_open_private_dashboard_and_form(monkeypatch) -> No
                     )
                     client.cookies.set(session_cookie_name(secure=False), raw_token)
                     root = await client.get("/")
-                    assert root.status_code == 302
-                    assert root.headers["location"] == "/edit"
+                    assert root.status_code == 200
+                    assert "What would you like to cook?" in root.text
+                    assert 'href="/edit"' in root.text
                     assert root.headers["cache-control"] == "private, no-store"
                     dashboard = await client.get("/edit")
                     assert dashboard.status_code == 200, dashboard.text

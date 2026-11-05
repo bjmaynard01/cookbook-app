@@ -1,0 +1,18 @@
+<article class="recipe-card">
+  <a class="recipe-card-media" href="/r/{{ card.recipe.slug }}" aria-label="View {{ card.recipe.title }}">
+    {% if card.image_url %}<img src="{{ card.image_url }}" alt="">
+    {% else %}<span class="recipe-placeholder" aria-hidden="true">{{ card.recipe.title[:1]|upper }}</span>{% endif %}
+  </a>
+  <div class="recipe-card-copy">
+    <h3><a href="/r/{{ card.recipe.slug }}">{{ card.recipe.title }}</a></h3>
+    {% if card.recipe.description %}<p class="recipe-hook">{{ card.recipe.description }}</p>{% endif %}
+    <div class="recipe-card-meta">
+      {% if card.recipe.total_minutes is not none %}<span>{{ card.recipe.total_minutes }} min</span>{% endif %}
+      {% if card.recipe.servings_text %}<span>{{ card.recipe.servings_text }}</span>{% endif %}
+    </div>
+    {% if card.categories or card.tags %}<div class="recipe-card-taxonomy" aria-label="Categories and tags">
+      {% for category in card.categories %}<a href="/c/{{ category.slug }}">{{ category.name }}</a>{% endfor %}
+      {% for tag in card.tags %}<a href="/t/{{ tag.slug }}">{{ tag.name }}</a>{% endfor %}
+    </div>{% endif %}
+  </div>
+</article>

@@ -27,6 +27,9 @@ class LegacyAliasMiddleware:
             await self.app(scope, receive, send)
             return
         query_bytes = scope.get("query_string", b"")
+        if path == "/" and not query_bytes:
+            await self.app(scope, receive, send)
+            return
         exact_path = path + ("?" + query_bytes.decode("latin-1") if query_bytes else "")
         if len(exact_path) > 255:
             await self.app(scope, receive, send)

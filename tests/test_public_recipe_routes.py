@@ -1,19 +1,20 @@
-"""Task 16 anonymous recipe reading and legacy URL routing tests."""
+"""Public recipe reading, browse listings, and legacy URL routing tests."""
 from __future__ import annotations
 
 import asyncio
 import io
 import uuid
+from datetime import datetime
 
 import httpx
 from PIL import Image
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 
 from cookbook.app import create_app
 from cookbook.auth.sessions import create_session, session_cookie_name
 from cookbook.config import get_settings
 from cookbook.db import get_engine, session_scope
-from cookbook.models import Category, Recipe, RecipeUrlAlias, Session, Tag, User
+from cookbook.models import Category, Recipe, RecipeUrlAlias, Session, Tag, User, recipe_tags
 from cookbook.recipes import (
     RecipeDraft,
     RecipeIngredientDraft,
@@ -314,8 +315,8 @@ def test_legacy_alias_middleware_redirects_exact_recipe_and_category_paths(monke
                 assert category_redirect.headers["location"] == "/c/breakfast"
 
                 unmatched = await client.get(f"{recipe_alias}&extra=1", follow_redirects=False)
-                assert unmatched.status_code == 302
-                assert unmatched.headers["location"] == "/login"
+                assert unmatched.status_code == 200
+                assert "What would you like to cook?" in unmatched.text
 
                 raw_token, _ = await create_session(user_id, settings=app.state.settings)
                 client.cookies.set(session_cookie_name(secure=False), raw_token)
@@ -337,6 +338,243 @@ def test_legacy_alias_middleware_redirects_exact_recipe_and_category_paths(monke
                 ).scalar_one_or_none()
                 if tag is not None:
                     await db.delete(tag)
+            await get_engine().dispose()
+            get_settings.cache_clear()
+
+    asyncio.run(run())
+
+
+def test_public_home_renders_featured_categories_tags_and_search(monkeypatch, tmp_path) -> None:
+    app = _test_app(monkeypatch, tmp_path)
+    slugs = [f"task17-home-{uuid.uuid4().hex[:10]}" for _ in range(8)]
+    common_tag = f"task17-popular-{uuid.uuid4().hex[:10]}"
+    less_used_tag = f"task17-other-{uuid.uuid4().hex[:10]}"
+    recipe_ids: list[str] = []
+    tag_ids: list[str] = []
+
+    async def run() -> None:
+        nonlocal tag_ids
+        try:
+            async with session_scope() as db:
+                breakfast = (
+                    await db.execute(select(Category).where(Category.name == "Breakfast"))
+                ).scalar_one()
+                desserts = (
+                    await db.execute(select(Category).where(Category.name == "Desserts"))
+                ).scalar_one()
+                categories = {row.name: row for row in (breakfast, desserts)}
+            for index in range(7):
+                recipe_ids.append(await _create_recipe(
+                    slug=slugs[index], title=f"Task 17 Featured {index + 1}",
+                    category_id=categories["Breakfast"].id, category_name="Breakfast",
+                    tag_name=common_tag,
+                ))
+            recipe_ids.append(await _create_recipe(
+                slug=slugs[7], title="Task 17 Unfeatured", category_id=categories["Desserts"].id,
+                category_name="Desserts", tag_name=less_used_tag,
+            ))
+            async with session_scope() as db:
+                for index in range(7):
+                    await db.execute(
+                        update(Recipe).where(Recipe.id == recipe_ids[index]).values(
+                            home_featured=True, home_position=7 - index
+                        )
+                    )
+                tag_ids = list(
+                    (await db.execute(select(Tag.id).where(Tag.name.in_([common_tag, less_used_tag]))))
+                    .scalars().all()
+                )
+                for index in range(12):
+                    extra_tag = Tag(
+                        name=f"task17-topic-{index:02}",
+                        slug=f"task17-topic-{index:02}",
+                    )
+                    db.add(extra_tag)
+                    await db.flush()
+                    tag_ids.append(extra_tag.id)
+                    await db.execute(
+                        recipe_tags.insert().values(
+                            recipe_id=recipe_ids[7], tag_id=extra_tag.id
+                        )
+                    )
+
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.get("/")
+                assert response.status_code == 200, response.text
+                assert response.headers["cache-control"] == "public, max-age=300, s-maxage=600"
+                featured = response.text.split('id="featured-recipes"', 1)[1].split(
+                    'id="categories"', 1
+                )[0]
+                assert featured.index(f'/r/{slugs[6]}') < featured.index(f'/r/{slugs[5]}')
+                assert slugs[0] not in featured
+                assert slugs[7] not in featured
+                assert "Task 17 Featured 1" not in featured
+                categories_html = response.text.split('id="categories"', 1)[1].split(
+                    'id="popular-tags"', 1
+                )[0]
+                assert categories_html.index('href="/c/breakfast"') < categories_html.index(
+                    'href="/c/fermentation"'
+                )
+                assert "7 recipes" in categories_html
+                assert f'href="/t/{common_tag}"' in response.text
+                popular_html = response.text.split('id="popular-tags"', 1)[1]
+                assert popular_html.index(common_tag) < popular_html.index(less_used_tag)
+                assert "task17-topic-09" in popular_html
+                assert "task17-topic-10" not in popular_html
+                assert 'action="/search"' in response.text
+                assert 'class="recipe-placeholder"' in response.text
+
+                async with session_scope() as db:
+                    await db.execute(
+                        update(Recipe).where(Recipe.id.in_(recipe_ids[:7])).values(
+                            home_featured=False
+                        )
+                    )
+                empty_featured = await client.get("/")
+                featured_empty_html = empty_featured.text.split(
+                    'id="featured-recipes"', 1
+                )[1].split('id="categories"', 1)[0]
+                assert "No featured recipes yet." in featured_empty_html
+        finally:
+            async with session_scope() as db:
+                if recipe_ids:
+                    await db.execute(delete(Recipe).where(Recipe.id.in_(recipe_ids)))
+                if tag_ids:
+                    await db.execute(delete(Tag).where(Tag.id.in_(tag_ids)))
+            await get_engine().dispose()
+            get_settings.cache_clear()
+
+    asyncio.run(run())
+
+
+def test_category_and_tag_pages_apply_ordered_recipe_and_structured_filters(monkeypatch, tmp_path) -> None:
+    app = _test_app(monkeypatch, tmp_path)
+    slugs = {
+        name: f"task17-{name}-{uuid.uuid4().hex[:10]}"
+        for name in ("quick", "slow", "untimed", "elsewhere", "other-tag")
+    }
+    common_tag = f"task17-filter-{uuid.uuid4().hex[:10]}"
+    other_tag = f"task17-secondary-{uuid.uuid4().hex[:10]}"
+    recipe_ids: list[str] = []
+    tag_ids: list[str] = []
+    timestamps = {
+        "quick": datetime(2026, 1, 5),
+        "slow": datetime(2026, 1, 3),
+        "untimed": datetime(2026, 1, 4),
+        "elsewhere": datetime(2026, 1, 2),
+        "other-tag": datetime(2026, 1, 1),
+    }
+
+    async def run() -> None:
+        nonlocal tag_ids
+        try:
+            async with session_scope() as db:
+                breakfast = (
+                    await db.execute(select(Category).where(Category.name == "Breakfast"))
+                ).scalar_one()
+                desserts = (
+                    await db.execute(select(Category).where(Category.name == "Desserts"))
+                ).scalar_one()
+                category_ids = {"breakfast": breakfast.id, "desserts": desserts.id}
+                category_names = {"breakfast": breakfast.name, "desserts": desserts.name}
+
+            recipe_specs = [
+                ("quick", "Browse Quick", "breakfast", common_tag, 20),
+                ("slow", "Browse Slow", "breakfast", common_tag, 42),
+                ("untimed", "Browse Untimed", "breakfast", common_tag, None),
+                ("elsewhere", "Browse Other Category", "desserts", common_tag, 15),
+                ("other-tag", "Browse Other Tag", "breakfast", other_tag, 15),
+            ]
+            for key, title, category_key, tag, minutes in recipe_specs:
+                recipe_ids.append(await _create_recipe(
+                    slug=slugs[key], title=title, category_id=category_ids[category_key],
+                    category_name=category_names[category_key], tag_name=tag,
+                    image_path="../../outside.png" if key == "other-tag" else None,
+                ))
+                async with session_scope() as db:
+                    await db.execute(
+                        update(Recipe).where(Recipe.id == recipe_ids[-1]).values(
+                            total_minutes=minutes, updated_at=timestamps[key]
+                        )
+                    )
+            async with session_scope() as db:
+                tag_rows = list(
+                    (await db.execute(select(Tag.id, Tag.name).where(Tag.name.in_([common_tag, other_tag]))))
+                    .all()
+                )
+                tag_ids = [row.id for row in tag_rows]
+                other_tag_id = next(row.id for row in tag_rows if row.name == other_tag)
+                await db.execute(
+                    recipe_tags.insert().values(recipe_id=recipe_ids[2], tag_id=other_tag_id)
+                )
+
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                category = await client.get("/c/breakfast")
+                assert category.status_code == 200, category.text
+                assert category.headers["cache-control"] == "public, max-age=300, s-maxage=600"
+                assert category.text.index("Browse Quick") < category.text.index("Browse Untimed")
+                assert category.text.index("Browse Untimed") < category.text.index("Browse Slow")
+                assert "A short introduction for the cook." in category.text
+                assert "42 min" in category.text and "Serves four" in category.text
+                assert "../../outside.png" not in category.text
+                assert 'class="recipe-placeholder"' in category.text
+                assert 'class="time-filters"' in category.text
+                assert 'class="semantic-tags"' in category.text
+
+                filtered = await client.get(
+                    f"/c/breakfast?tag={common_tag}&max_minutes=30"
+                )
+                assert filtered.status_code == 200
+                assert "Browse Quick" in filtered.text
+                assert "Browse Slow" not in filtered.text
+                assert "Browse Untimed" not in filtered.text
+                assert "Browse Other Category" not in filtered.text
+                assert "Browse Other Tag" not in filtered.text
+
+                unknown_tag_filter = await client.get(
+                    "/c/breakfast?tag=task17-no-such-filter-tag"
+                )
+                assert unknown_tag_filter.status_code == 200
+                assert "No recipes match this view yet." in unknown_tag_filter.text
+
+                tag_page = await client.get(f"/t/{common_tag}")
+                assert tag_page.status_code == 200, tag_page.text
+                assert tag_page.text.index("Browse Quick") < tag_page.text.index("Browse Untimed")
+                assert "Browse Other Category" in tag_page.text
+                assert f'href="/c/desserts"' in tag_page.text
+                assert f'href="/t/{other_tag}"' in tag_page.text
+        finally:
+            async with session_scope() as db:
+                if recipe_ids:
+                    await db.execute(delete(Recipe).where(Recipe.id.in_(recipe_ids)))
+                if tag_ids:
+                    await db.execute(delete(Tag).where(Tag.id.in_(tag_ids)))
+            await get_engine().dispose()
+            get_settings.cache_clear()
+
+    asyncio.run(run())
+
+
+def test_unknown_category_and_tag_pages_are_private_404s(monkeypatch, tmp_path) -> None:
+    app = _test_app(monkeypatch, tmp_path)
+
+    async def run() -> None:
+        try:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                empty_home = await client.get("/")
+                assert "No featured recipes yet." in empty_home.text
+                assert "Tags will appear here as recipes are added." in empty_home.text
+                empty_category = await client.get("/c/fermentation")
+                assert empty_category.status_code == 200
+                assert "No recipes match this view yet." in empty_category.text
+                for path in ("/c/no-such-task17-category", "/t/no-such-task17-tag"):
+                    response = await client.get(path)
+                    assert response.status_code == 404
+                    assert response.headers["cache-control"] == "private, no-store"
+        finally:
             await get_engine().dispose()
             get_settings.cache_clear()
 

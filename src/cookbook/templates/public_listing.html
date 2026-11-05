@@ -1,0 +1,47 @@
+{% extends "public_browse_base.html" %}
+{% block title %}{{ heading }} · Cookbook{% endblock %}
+{% block browse_content %}
+<section aria-labelledby="listing-title">
+  <h1 id="listing-title">{{ heading }}</h1>
+  <p class="listing-intro">{{ description }}</p>
+</section>
+
+{% if category %}
+<div class="browse-filters" aria-label="Narrow recipes">
+  <section class="time-filters" aria-labelledby="time-filter-title">
+    <h2 id="time-filter-title">Time</h2>
+    <ul class="time-filter-list">
+      <li><a class="browse-chip" href="/c/{{ category.slug }}{% if selected_tag %}?tag={{ selected_tag.slug }}{% endif %}" {% if not max_minutes %}aria-current="true"{% endif %}>Any time</a></li>
+      {% for minutes in time_filters %}
+      <li><a class="browse-chip" href="/c/{{ category.slug }}?{% if selected_tag %}tag={{ selected_tag.slug }}&amp;{% endif %}max_minutes={{ minutes }}" {% if max_minutes == minutes %}aria-current="true"{% endif %}>{{ minutes }} minutes or less</a></li>
+      {% endfor %}
+    </ul>
+  </section>
+  <section class="semantic-tags" aria-labelledby="tag-filter-title">
+    <h2 id="tag-filter-title">Filter by tag</h2>
+    {% if available_tags %}
+    <ul class="tag-list">
+      {% for entry in available_tags %}
+      <li>
+        {% if selected_tag and selected_tag.id == entry.tag.id %}
+        <a class="browse-chip" href="/c/{{ category.slug }}{% if max_minutes %}?max_minutes={{ max_minutes }}{% endif %}" aria-current="true">{{ entry.tag.name }} <small>{{ entry.recipe_count }}</small></a>
+        {% else %}
+        <a class="browse-chip" href="/c/{{ category.slug }}?tag={{ entry.tag.slug }}{% if max_minutes %}&amp;max_minutes={{ max_minutes }}{% endif %}">{{ entry.tag.name }} <small>{{ entry.recipe_count }}</small></a>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}<p>No tags in this category yet.</p>{% endif %}
+  </section>
+</div>
+{% endif %}
+
+<section aria-label="Recipes">
+  {% if recipes %}
+  <p class="listing-count">{{ recipes|length }} {{ "recipe" if recipes|length == 1 else "recipes" }}</p>
+  <div class="recipe-card-list">
+    {% for card in recipes %}{% include "recipe_card.html" %}{% endfor %}
+  </div>
+  {% else %}<p class="empty-state">No recipes match this view yet. <a href="/">Browse all categories</a>.</p>{% endif %}
+</section>
+{% endblock %}

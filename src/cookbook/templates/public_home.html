@@ -1,0 +1,50 @@
+{% extends "public_browse_base.html" %}
+{% block title %}Cookbook · Find something to cook{% endblock %}
+{% block browse_content %}
+<section class="browse-intro">
+  <h1>What would you like to cook?</h1>
+  <form class="browse-search" action="/search" method="get" role="search">
+    <label class="sr-only" for="home-search">Search recipes</label>
+    <input id="home-search" type="search" name="q" placeholder="Search recipes">
+    <button type="submit">Search</button>
+  </form>
+</section>
+
+<section class="browse-section" id="featured-recipes" aria-labelledby="featured-title">
+  <h2 id="featured-title">Featured recipes</h2>
+  {% if featured %}
+  <div class="recipe-card-list">
+    {% for card in featured %}{% include "recipe_card.html" %}{% endfor %}
+  </div>
+  {% else %}<p class="empty-state">No featured recipes yet.</p>{% endif %}
+</section>
+
+<section class="browse-section" id="categories" aria-labelledby="categories-title">
+  <h2 id="categories-title">Browse by category</h2>
+  {% if categories %}
+  <div class="category-grid">
+    {% for entry in categories %}
+    <article class="category-card">
+      <a href="/c/{{ entry.category.slug }}">
+        {% if entry.image_url %}<img src="{{ entry.image_url }}" alt="">
+        {% else %}<span class="category-placeholder" aria-hidden="true">{{ entry.category.name[:1]|upper }}</span>{% endif %}
+        <span class="category-card-copy">
+          <strong>{{ entry.category.name }}</strong>
+          <small>{{ entry.recipe_count }} {{ "recipe" if entry.recipe_count == 1 else "recipes" }}</small>
+        </span>
+      </a>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}<p class="empty-state">Categories will appear here as the cookbook grows.</p>{% endif %}
+</section>
+
+<section class="browse-section" id="popular-tags" aria-labelledby="tags-title">
+  <h2 id="tags-title">Popular tags</h2>
+  {% if popular_tags %}
+  <ul class="tag-list">
+    {% for entry in popular_tags %}<li><a class="browse-chip" href="/t/{{ entry.tag.slug }}">{{ entry.tag.name }} <small>{{ entry.recipe_count }}</small></a></li>{% endfor %}
+  </ul>
+  {% else %}<p class="empty-state">Tags will appear here as recipes are added.</p>{% endif %}
+</section>
+{% endblock %}
