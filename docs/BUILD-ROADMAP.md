@@ -1,10 +1,10 @@
 # Cookbook App Build Roadmap
 
 **Source of truth:** `PRODUCT.md` and the approved design in `docs/superpowers/specs/2026-09-20-cookbook-design.md`.
-**Updated:** 2026-11-04
+**Updated:** 2026-11-05
 **Planned scope:** 20 delivery tasks. Task boundaries can be revised if the owner changes product scope; this count covers the current v1 specification.
 
-This roadmap gives the project one ordered task sheet. Each task may have a separate design and implementation plan. Tasks 1–14 are complete; Task 15 is next. No task adds features explicitly excluded from the approved v1 spec.
+This roadmap gives the project one ordered task sheet. Each task may have a separate design and implementation plan. Tasks 1–15 are complete; Task 16 is next. No task adds features explicitly excluded from the approved v1 spec.
 
 ## Branch workflow
 
@@ -28,7 +28,7 @@ This roadmap gives the project one ordered task sheet. Each task may have a sepa
 | 12 | Safe URL fetch and page extraction | Complete | Public-URL validation, DNS-pinned SSRF defenses, bounded HTTP fetches, and HTML/JSON-LD extraction. [Plan](superpowers/plans/2026-10-31-safe-url-fetch.md) |
 | 13 | Deterministic recipe parsing | Complete | JSON-LD candidate selection and microdata fallback into the shared `RecipeDraft`. [Plan](superpowers/plans/2026-10-31-deterministic-parsing.md) |
 | 14 | Optional LLM parsing fallback | Complete | Optional OpenAI-compatible fallback with strict `RecipeDraft` validation, a 10-second cap, and safe no-key behavior. [Plan](superpowers/plans/2026-11-02-llm-parsing-fallback.md) |
-| 15 | Ingest review and save flow | Planned | Dashboard URL launcher, distinct ingest states, and landing in the same recipe form. |
+| 15 | Ingest review and save flow | Complete | Dashboard URL launcher, four review states in the shared form, provenance, duplicate notice, bounded image save, and a four-job ingest pool. [Plan](superpowers/plans/2026-11-05-ingest-review-save.md) |
 | 16 | Public recipe page and legacy redirects | Planned | Readable `/r/<slug>` pages and alias redirects with preserved old links. |
 | 17 | Home, category, and tag browsing | Planned | Public navigation and recipe lists across the specified browse surfaces. |
 | 18 | Search and result filtering | Planned | Full-text search, ranking, time/tag filters, and useful empty states. |

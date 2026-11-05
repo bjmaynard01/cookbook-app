@@ -66,11 +66,17 @@ def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.llm_api_key is None
     assert s.llm_api_key_file is None
     assert s.llm_timeout_seconds == 10
+    assert s.ingest_max_concurrent == 4
 
 
 def test_llm_timeout_cannot_exceed_product_cap() -> None:
     with pytest.raises(ValueError):
         Settings(LLM_TIMEOUT_SECONDS=11)
+
+
+def test_ingest_concurrency_limit_must_be_positive() -> None:
+    with pytest.raises(ValueError):
+        Settings(INGEST_MAX_CONCURRENT=0)
 
 
 def test_llm_api_key_file_setting_is_loaded(

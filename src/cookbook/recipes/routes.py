@@ -1,14 +1,17 @@
 """Authenticated, server-rendered recipe editor routes."""
 from __future__ import annotations
 
+import asyncio
 import re
 import logging
+from datetime import UTC, datetime
 from functools import partial
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
 import anyio
+import httpx
 from fastapi import APIRouter, Depends, File, Request, UploadFile
 from sqlalchemy import or_, select
 from starlette.exceptions import HTTPException
@@ -28,8 +31,10 @@ from ..models import (
     recipe_tags,
 )
 from .drafts import (
+    DuplicateRecipeDraft,
     RecipeDraft,
     RecipeIngredientDraft,
+    RecipeProvenanceDraft,
     RecipeSectionDraft,
     RecipeStepDraft,
 )
@@ -40,6 +45,8 @@ from .errors import (
     RecipeNotFound,
     UnknownCategories,
 )
+from .ingest import FetchError, fetch_page, fetch_public_bytes
+from .llm import parse_recipe_page_with_fallback
 from .images import InvalidRecipeImage, delete_stored_image, resolve_stored_image, store_image
 from .service import (
     create_recipe,
@@ -54,6 +61,7 @@ router = APIRouter()
 log = logging.getLogger("cookbook.recipes.images")
 templates = Jinja2Templates(directory=Path(__file__).resolve().parent.parent / "templates")
 _editor = require_role("editor")
+INGEST_TIMEOUT_SECONDS = 30.0
 _SECTION_FIELD = re.compile(r"^sections\[(\d+)\]\[(heading|kind)\]$")
 _LINE_FIELD = re.compile(
     r"^sections\[(\d+)\]\[lines\]\[(\d+)\]"
@@ -71,6 +79,74 @@ def _csrf_token(request: Request) -> str:
     if isinstance(loaded, LoadedSession):
         return loaded.session.csrf_token
     return ""
+
+
+def _normalize_source_url(value: str) -> str:
+    return str(httpx.URL(value.strip()).copy_with(fragment=None))
+
+
+def _source_name(url: str, site_name: str | None = None) -> str | None:
+    if site_name and site_name.strip():
+        return site_name.strip()[:300]
+    try:
+        return httpx.URL(url).host or None
+    except (httpx.InvalidURL, TypeError, ValueError):
+        return None
+
+
+def _blank_ingest_draft(source_url: str, source_name: str | None) -> RecipeDraft:
+    return RecipeDraft(
+        title="",
+        sections=[
+            RecipeSectionDraft(
+                heading="Ingredients", kind="ingredients", lines=[RecipeIngredientDraft(raw_text="")]
+            ),
+            RecipeSectionDraft(
+                heading="Steps", kind="steps", lines=[RecipeStepDraft(body="")]
+            ),
+        ],
+        provenance=RecipeProvenanceDraft(
+            source_url=source_url or None,
+            source_name=source_name,
+        ),
+    )
+
+
+def _ingest_state(draft: RecipeDraft) -> str:
+    ingredient_lines = [
+        line.raw_text.strip()
+        for section in draft.sections
+        if section.kind == "ingredients"
+        for line in section.lines
+        if isinstance(line, RecipeIngredientDraft) and line.raw_text.strip()
+    ]
+    step_lines = [
+        line.body.strip()
+        for section in draft.sections
+        if section.kind == "steps"
+        for line in section.lines
+        if isinstance(line, RecipeStepDraft) and line.body.strip()
+    ]
+    has_content = bool(
+        draft.title.strip()
+        or (draft.description or "").strip()
+        or ingredient_lines
+        or step_lines
+        or any(name.strip() for name in draft.tags)
+        or any(name.strip() for name in draft.suggested_categories)
+        or draft.servings_text
+        or draft.servings_number is not None
+        or draft.servings_unit
+        or draft.prep_minutes is not None
+        or draft.cook_minutes is not None
+        or draft.total_minutes is not None
+        or draft.hero_image
+    )
+    if not has_content:
+        return "nothing-found"
+    if draft.title.strip() and ingredient_lines and step_lines and not draft.parse_notes:
+        return "full"
+    return "partial"
 
 
 async def _categories() -> list[Category]:
@@ -96,8 +172,18 @@ def _form_context(
     message: str | None = None,
     image_path: str | None = None,
     image_message: str | None = None,
+    ingest_state: str | None = None,
+    ingest_message: str | None = None,
     status_code: int = 200,
 ) -> Response:
+    form_values = form_values or {}
+    allowed_ingest_states = {"fetch-failed", "nothing-found", "partial", "full"}
+    if ingest_state is None:
+        ingest_state = form_values.get("ingest_state")
+    if ingest_state not in allowed_ingest_states:
+        ingest_state = None
+    if ingest_message is None:
+        ingest_message = form_values.get("ingest_message")
     response = templates.TemplateResponse(
         request,
         "recipe_form.html",
@@ -109,10 +195,12 @@ def _form_context(
             "recipe_id": recipe_id,
             "slug": slug,
             "errors": errors or {},
-            "form_values": form_values or {},
+            "form_values": form_values,
             "message": message,
             "image_path": image_path,
             "image_message": image_message,
+            "ingest_state": ingest_state,
+            "ingest_message": ingest_message,
             "upload_max_bytes": get_settings().upload_max_bytes,
         },
         status_code=status_code,
@@ -195,8 +283,48 @@ def _draft_from_form(fields: Any) -> tuple[RecipeDraft, dict[str, str]]:
         prep_minutes=_optional_int("prep_minutes"),
         cook_minutes=_optional_int("cook_minutes"),
         total_minutes=_optional_int("total_minutes"),
+        hero_image=str(fields.get("hero_image", "")).strip() or None,
+        parse_notes=[
+            value.strip()
+            for value in fields.getlist("parse_notes")
+            if isinstance(value, str) and value.strip()
+        ],
+        provenance=_provenance_from_form(fields),
     )
     return draft, field_errors
+
+
+def _provenance_from_form(fields: Any) -> RecipeProvenanceDraft | None:
+    source_url = str(fields.get("source_url", "")).strip() or None
+    source_name = str(fields.get("source_name", "")).strip() or None
+    method = str(fields.get("extraction_method", "")).strip().casefold()
+    if method not in {"jsonld", "microdata", "llm", "manual", "wxr"}:
+        method = "manual" if source_url else "manual"
+    source_system = str(fields.get("source_system", "")).strip() or None
+    source_id = str(fields.get("source_id", "")).strip() or None
+    if (
+        source_url is None
+        and source_name is None
+        and source_system is None
+        and source_id is None
+        and not fields.get("extraction_method")
+    ):
+        return None
+    raw_imported_at = str(fields.get("imported_at", "")).strip()
+    try:
+        imported_at = datetime.fromisoformat(raw_imported_at) if raw_imported_at else None
+    except ValueError:
+        imported_at = None
+    if imported_at is None and source_url:
+        imported_at = datetime.now(UTC)
+    return RecipeProvenanceDraft(
+        source_system=source_system,
+        source_id=source_id,
+        source_url=source_url,
+        source_name=source_name,
+        extraction_method=method,
+        imported_at=imported_at,
+    )
 
 
 def _simple_form_values(fields: Any) -> dict[str, str]:
@@ -238,6 +366,28 @@ def _draft_from_recipe(details: Any) -> RecipeDraft:
         prep_minutes=recipe.prep_minutes,
         cook_minutes=recipe.cook_minutes,
         total_minutes=recipe.total_minutes,
+        provenance=(
+            RecipeProvenanceDraft(
+                source_system=recipe.source_system,
+                source_id=recipe.source_id,
+                source_url=recipe.source_url,
+                source_name=recipe.source_name,
+                extraction_method=recipe.extraction_method,
+                imported_at=recipe.imported_at,
+            )
+            if any(
+                value is not None
+                for value in (
+                    recipe.source_system,
+                    recipe.source_id,
+                    recipe.source_url,
+                    recipe.source_name,
+                    recipe.extraction_method,
+                    recipe.imported_at,
+                )
+            )
+            else None
+        ),
     )
 
 
@@ -370,7 +520,17 @@ async def _save_from_form(
         except RecipeNotFound as exc:
             raise HTTPException(status_code=404, detail="Recipe not found") from exc
         saved_id = recipe.id
-    return RedirectResponse(f"/recipes/{saved_id}/edit?saved=1", status_code=303)
+    image_failed = False
+    if recipe_id is None and draft.hero_image:
+        image_failed = not await _save_candidate_image(
+            request,
+            saved_id,
+            draft.hero_image,
+        )
+    location = f"/recipes/{saved_id}/edit?saved=1"
+    if image_failed:
+        location += "&image=download_failed"
+    return RedirectResponse(location, status_code=303)
 
 
 @router.get("/edit")
@@ -449,6 +609,99 @@ async def editor_dashboard(
     return response
 
 
+@router.post("/recipes/ingest", dependencies=[Depends(require_csrf)])
+async def ingest_recipe_form(
+    request: Request,
+    editor: User = Depends(_editor),
+):
+    fields = await request.form()
+    submitted_url = str(fields.get("url", "")).strip()
+    try:
+        source_url = _normalize_source_url(submitted_url)
+    except (httpx.InvalidURL, TypeError, ValueError):
+        source_url = submitted_url
+    source_name = _source_name(source_url)
+    draft = _blank_ingest_draft(source_url, source_name)
+    ingest_state = "fetch-failed"
+    ingest_message = "The recipe source could not be fetched. You can enter the recipe details manually."
+
+    try:
+        async with asyncio.timeout(INGEST_TIMEOUT_SECONDS):
+            async with request.app.state.ingest_semaphore:
+                page = await fetch_page(source_url)
+                parsed = await parse_recipe_page_with_fallback(page)
+        source_name = _source_name(source_url, page.site_name)
+        provenance = RecipeProvenanceDraft(
+            source_url=source_url,
+            source_name=source_name,
+            extraction_method=(
+                parsed.provenance.extraction_method if parsed.provenance else None
+            ),
+            imported_at=datetime.now(UTC),
+        )
+        draft = parsed.model_copy(
+            update={
+                "provenance": provenance,
+                "hero_image": parsed.hero_image or page.og_image,
+            }
+        )
+        ingest_state = _ingest_state(draft)
+        ingest_message = None
+        if ingest_state == "nothing-found":
+            ingest_message = "No recipe fields were found. You can enter the details manually."
+        elif ingest_state == "partial":
+            ingest_message = "Some recipe fields were found. Review the details and fill in anything missing."
+        elif ingest_state == "full":
+            ingest_message = "Recipe details were found. Review them before saving."
+
+        async with session_scope() as db:
+            duplicate = (
+                await db.execute(
+                    select(Recipe.id, Recipe.title)
+                    .where(Recipe.source_url == source_url)
+                    .limit(1)
+                )
+            ).first()
+        if duplicate is not None:
+            draft = draft.model_copy(
+                update={
+                    "already_exists": DuplicateRecipeDraft(
+                        id=duplicate.id,
+                        title=duplicate.title,
+                    )
+                }
+            )
+    except FetchError as exc:
+        ingest_message = f"{exc} You can enter the recipe details manually."
+    except TimeoutError:
+        ingest_message = (
+            "Fetching and parsing the recipe source exceeded the time limit. "
+            "You can enter the recipe details manually."
+        )
+    except Exception as exc:
+        logging.getLogger("cookbook.recipes.ingest").warning(
+            "recipe ingest failed: %s", type(exc).__name__
+        )
+        ingest_message = (
+            "The recipe source could not be processed. You can enter the recipe details manually."
+        )
+
+    categories = await _categories()
+    suggested = {name.strip().casefold() for name in draft.suggested_categories if name.strip()}
+    selected_category_ids = {
+        category.id for category in categories if category.name.strip().casefold() in suggested
+    }
+    return _form_context(
+        request,
+        draft=draft,
+        categories=categories,
+        selected_category_ids=selected_category_ids,
+        csrf_token=_csrf_token(request),
+        ingest_state=ingest_state,
+        ingest_message=ingest_message,
+    )
+
+
 @router.get("/recipes/new")
 async def new_recipe_form(request: Request, editor: User = Depends(_editor)):
     categories = await _categories()
@@ -501,6 +754,7 @@ async def edit_recipe_form(
     image_state = request.query_params.get("image")
     image_messages = {
         "saved": "Recipe image saved.",
+        "download_failed": "The recipe was saved, but its source image could not be downloaded.",
         "removed": "Recipe image removed.",
         "invalid": "Upload a valid JPEG, PNG, or WebP image within the size limit.",
         "storage_error": "The image could not be stored. Your existing image is unchanged.",
@@ -583,6 +837,39 @@ async def _remove_image_best_effort(relative_path: str | None) -> None:
         )
     except OSError as exc:
         log.warning("recipe image cleanup failed: %s", type(exc).__name__)
+
+
+async def _save_candidate_image(
+    request: Request,
+    recipe_id: str,
+    image_url: str,
+) -> bool:
+    settings = request.app.state.settings
+    if len(image_url) > 2000:
+        log.warning("source image candidate rejected: URL too long")
+        return False
+    stored = None
+    try:
+        content, _media_type = await fetch_public_bytes(
+            image_url,
+            max_bytes=min(settings.upload_max_bytes, 10 * 1024 * 1024),
+        )
+        stored = await anyio.to_thread.run_sync(
+            partial(
+                store_image,
+                content,
+                settings.media_dir,
+                max_bytes=settings.upload_max_bytes,
+            )
+        )
+        async with session_scope() as db:
+            await set_recipe_image(db, recipe_id, stored.relative_path)
+        return True
+    except Exception as exc:
+        if stored is not None:
+            await _remove_image_best_effort(stored.relative_path)
+        log.warning("source image save failed: %s", type(exc).__name__)
+        return False
 
 
 @router.post("/recipes/{recipe_id}/image", dependencies=[Depends(require_csrf)])

@@ -1,6 +1,7 @@
 """Cookbook app — FastAPI application factory and health endpoints (spec §9.5)."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import tempfile
@@ -27,6 +28,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title=settings.app_name, version=__version__, docs_url=None, redoc_url=None)
     app.state.start_time = _START
+    app.state.ingest_semaphore = asyncio.Semaphore(settings.ingest_max_concurrent)
 
     @app.get("/", include_in_schema=False)
     async def home(request: Request):

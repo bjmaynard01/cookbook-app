@@ -2,16 +2,20 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import uuid
 
 import httpx
 import pytest
+from PIL import Image
 from sqlalchemy import delete, select
 
 from cookbook.auth.sessions import create_session, session_cookie_name
 from cookbook.app import create_app
 from cookbook.db import get_engine, session_scope
 from cookbook.models import Category, Recipe, RecipeUrlAlias, Session, Tag, User, recipe_tags
+from cookbook.recipes import routes as recipe_routes
+from cookbook.recipes.ingest import FetchError
 
 
 def test_editor_dashboard_requires_an_editor_session() -> None:
@@ -22,6 +26,458 @@ def test_editor_dashboard_requires_an_editor_session() -> None:
             response = await client.get("/edit")
         assert response.status_code == 401
         assert response.headers["cache-control"] == "private, no-store"
+
+    asyncio.run(run())
+
+
+def test_app_ingest_pool_uses_configured_concurrency_limit(monkeypatch) -> None:
+    monkeypatch.setenv("DEBUG", "false")
+    monkeypatch.setenv("SECRET_KEY", "task15-test-secret")
+    monkeypatch.setenv("INGEST_MAX_CONCURRENT", "1")
+    from cookbook.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        app = create_app()
+        semaphore = app.state.ingest_semaphore
+
+        async def run() -> None:
+            assert await semaphore.acquire()
+            second = asyncio.create_task(semaphore.acquire())
+            await asyncio.sleep(0)
+            assert not second.done()
+            semaphore.release()
+            assert await second
+            semaphore.release()
+
+        asyncio.run(run())
+    finally:
+        get_settings.cache_clear()
+
+
+def test_ingest_launcher_and_fetch_failure_land_in_editor_form(monkeypatch) -> None:
+    monkeypatch.setenv("DEBUG", "false")
+    monkeypatch.setenv("SECRET_KEY", "task15-test-secret")
+    from cookbook.config import get_settings
+
+    get_settings.cache_clear()
+
+    async def fail_fetch(url: str):
+        raise FetchError("The recipe source could not be fetched.")
+
+    monkeypatch.setattr(recipe_routes, "fetch_page", fail_fetch, raising=False)
+
+    async def run() -> None:
+        app = create_app()
+        user_id = str(uuid.uuid4())
+        try:
+            async with session_scope() as db:
+                db.add(
+                    User(
+                        id=user_id,
+                        username=f"task15-{uuid.uuid4().hex}",
+                        password_hash="test-only",
+                        role="editor",
+                        is_active=True,
+                    )
+                )
+            raw_token, auth_session = await create_session(
+                user_id, settings=app.state.settings
+            )
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                client.cookies.set(session_cookie_name(secure=False), raw_token)
+                dashboard = await client.get("/edit")
+                assert dashboard.status_code == 200
+                assert 'action="/recipes/ingest"' in dashboard.text
+                assert 'name="url"' in dashboard.text
+
+                no_csrf = await client.post(
+                    "/recipes/ingest", data={"url": "https://recipes.example/pie"}
+                )
+                assert no_csrf.status_code == 403
+
+                response = await client.post(
+                    "/recipes/ingest",
+                    data={
+                        "csrf_token": auth_session.csrf_token,
+                        "url": "https://recipes.example/pie",
+                    },
+                )
+                assert response.status_code == 200, response.text
+                assert response.headers["cache-control"] == "private, no-store"
+                assert 'data-ingest-state="fetch-failed"' in response.text
+                assert "recipe source could not be fetched" in response.text.lower()
+                assert "https://recipes.example/pie" in response.text
+
+                async def slow_fetch(url: str):
+                    await asyncio.sleep(0.02)
+
+                monkeypatch.setattr(recipe_routes, "INGEST_TIMEOUT_SECONDS", 0.001)
+                monkeypatch.setattr(recipe_routes, "fetch_page", slow_fetch)
+                timed_out = await client.post(
+                    "/recipes/ingest",
+                    data={
+                        "csrf_token": auth_session.csrf_token,
+                        "url": "https://recipes.example/slow",
+                    },
+                )
+                assert timed_out.status_code == 200
+                assert 'data-ingest-state="fetch-failed"' in timed_out.text
+                assert "exceeded the time limit" in timed_out.text
+        finally:
+            async with session_scope() as db:
+                await db.execute(delete(Session).where(Session.user_id == user_id))
+                await db.execute(delete(User).where(User.id == user_id))
+            await get_engine().dispose()
+            get_settings.cache_clear()
+
+    asyncio.run(run())
+
+
+def test_ingest_prefills_existing_form_and_save_keeps_provenance(monkeypatch) -> None:
+    monkeypatch.setenv("DEBUG", "false")
+    monkeypatch.setenv("SECRET_KEY", "task15-test-secret")
+    from cookbook.config import get_settings
+    from cookbook.recipes.drafts import (
+        RecipeDraft,
+        RecipeIngredientDraft,
+        RecipeSectionDraft,
+        RecipeStepDraft,
+    )
+    from cookbook.recipes.ingest import FetchedPage
+
+    get_settings.cache_clear()
+    source_url = "https://recipes.example/pie"
+
+    async def fake_fetch(url: str):
+        return FetchedPage(
+            source_url=url,
+            final_url=url,
+            status_code=200,
+            content_type="text/html",
+            html="",
+            title="Pumpkin Pie recipe",
+            site_name="Recipes Example",
+        )
+
+    async def fake_parse(page):
+        return RecipeDraft(
+            title="Pumpkin Pie",
+            sections=[
+                RecipeSectionDraft(
+                    heading="Ingredients",
+                    kind="ingredients",
+                    lines=[RecipeIngredientDraft(raw_text="1 cup pumpkin")],
+                ),
+                RecipeSectionDraft(
+                    heading="Steps",
+                    kind="steps",
+                    lines=[RecipeStepDraft(body="Bake until set.")],
+                ),
+            ],
+            suggested_categories=["Breakfast"],
+            provenance={"source_url": page.source_url, "extraction_method": "jsonld"},
+        )
+
+    async def fail_image(url: str, **kwargs):
+        raise FetchError("The source image could not be fetched.")
+
+    monkeypatch.setattr(recipe_routes, "fetch_page", fake_fetch)
+    monkeypatch.setattr(recipe_routes, "parse_recipe_page_with_fallback", fake_parse)
+    monkeypatch.setattr(recipe_routes, "fetch_public_bytes", fail_image, raising=False)
+
+    async def run() -> None:
+        app = create_app()
+        user_id = str(uuid.uuid4())
+        recipe_id: str | None = None
+        try:
+            async with session_scope() as db:
+                await db.execute(delete(Recipe).where(Recipe.source_url == source_url))
+                db.add(
+                    User(
+                        id=user_id,
+                        username=f"task15-{uuid.uuid4().hex}",
+                        password_hash="test-only",
+                        role="editor",
+                        is_active=True,
+                    )
+                )
+                category_id = (
+                    await db.execute(
+                        select(Category.id).where(Category.name == "Breakfast")
+                    )
+                ).scalar_one()
+            raw_token, auth_session = await create_session(
+                user_id, settings=app.state.settings
+            )
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                client.cookies.set(session_cookie_name(secure=False), raw_token)
+                preview = await client.post(
+                    "/recipes/ingest",
+                    data={"csrf_token": auth_session.csrf_token, "url": source_url + "#instructions"},
+                )
+                assert preview.status_code == 200, preview.text
+                assert 'data-ingest-state="full"' in preview.text
+                assert 'name="source_url" value="https://recipes.example/pie"' in preview.text
+                assert 'name="source_name" value="Recipes Example"' in preview.text
+                assert 'name="extraction_method" value="jsonld"' in preview.text
+                assert 'name="category_ids"' in preview.text
+                assert "Pumpkin Pie" in preview.text
+                assert "1 cup pumpkin" in preview.text
+                assert "Bake until set." in preview.text
+                async with session_scope() as db:
+                    assert (
+                        await db.execute(
+                            select(Recipe.id).where(Recipe.source_url == source_url)
+                        )
+                    ).scalar_one_or_none() is None
+
+                saved = await client.post(
+                    "/recipes",
+                    data={
+                        "csrf_token": auth_session.csrf_token,
+                        "title": "Pumpkin Pie",
+                        "category_ids": category_id,
+                        "source_url": source_url,
+                        "source_name": "Recipes Example",
+                        "extraction_method": "jsonld",
+                        "hero_image": "https://images.example/pie.png",
+                        "sections[0][heading]": "Ingredients",
+                        "sections[0][kind]": "ingredients",
+                        "sections[0][lines][0][raw_text]": "1 cup pumpkin",
+                        "sections[1][heading]": "Steps",
+                        "sections[1][kind]": "steps",
+                        "sections[1][lines][0][body]": "Bake until set.",
+                    },
+                )
+                assert saved.status_code == 303, saved.text
+                assert "image=download_failed" in saved.headers["location"]
+                async with session_scope() as db:
+                    recipe = (
+                        await db.execute(
+                            select(Recipe).where(Recipe.source_url == source_url)
+                        )
+                    ).scalar_one()
+                    recipe_id = recipe.id
+                    assert recipe.source_name == "Recipes Example"
+                    assert recipe.extraction_method == "jsonld"
+                    assert recipe.imported_at is not None
+                    assert recipe.image_path is None
+                duplicate_preview = await client.post(
+                    "/recipes/ingest",
+                    data={"csrf_token": auth_session.csrf_token, "url": source_url},
+                )
+                assert duplicate_preview.status_code == 200
+                assert "A recipe from this source already exists" in duplicate_preview.text
+                assert f'href="/recipes/{recipe_id}/edit"' in duplicate_preview.text
+                edit_page = await client.get(f"/recipes/{recipe_id}/edit")
+                assert edit_page.status_code == 200
+                assert "Source: Recipes Example" in edit_page.text
+        finally:
+            async with session_scope() as db:
+                await db.execute(delete(Recipe).where(Recipe.source_url == source_url))
+                if recipe_id:
+                    await db.execute(delete(Recipe).where(Recipe.id == recipe_id))
+                await db.execute(delete(Session).where(Session.user_id == user_id))
+                await db.execute(delete(User).where(User.id == user_id))
+            await get_engine().dispose()
+            get_settings.cache_clear()
+
+    asyncio.run(run())
+
+
+def test_ingest_distinguishes_empty_and_partial_parse_states(monkeypatch) -> None:
+    monkeypatch.setenv("DEBUG", "false")
+    monkeypatch.setenv("SECRET_KEY", "task15-test-secret")
+    from cookbook.config import get_settings
+    from cookbook.recipes.drafts import RecipeDraft, RecipeIngredientDraft, RecipeSectionDraft
+    from cookbook.recipes.ingest import FetchedPage
+
+    get_settings.cache_clear()
+
+    async def fake_fetch(url: str):
+        return FetchedPage(
+            source_url=url,
+            final_url=url,
+            status_code=200,
+            content_type="text/html",
+            html="",
+        )
+
+    async def fake_parse(page):
+        if page.source_url.endswith("/empty"):
+            return RecipeDraft(
+                title="",
+                parse_notes=["Optional LLM parsing is not configured."],
+                provenance={"source_url": page.source_url},
+            )
+        return RecipeDraft(
+            title="Berry Tart",
+            sections=[
+                RecipeSectionDraft(
+                    heading="Ingredients",
+                    kind="ingredients",
+                    lines=[RecipeIngredientDraft(raw_text="2 cups berries")],
+                )
+            ],
+            parse_notes=["Some recipe timing information could not be interpreted."],
+            provenance={"source_url": page.source_url, "extraction_method": "microdata"},
+        )
+
+    monkeypatch.setattr(recipe_routes, "fetch_page", fake_fetch)
+    monkeypatch.setattr(recipe_routes, "parse_recipe_page_with_fallback", fake_parse)
+
+    async def run() -> None:
+        app = create_app()
+        user_id = str(uuid.uuid4())
+        try:
+            async with session_scope() as db:
+                db.add(
+                    User(
+                        id=user_id,
+                        username=f"task15-{uuid.uuid4().hex}",
+                        password_hash="test-only",
+                        role="editor",
+                        is_active=True,
+                    )
+                )
+            raw_token, auth_session = await create_session(
+                user_id, settings=app.state.settings
+            )
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                client.cookies.set(session_cookie_name(secure=False), raw_token)
+                for path, state in (("empty", "nothing-found"), ("partial", "partial")):
+                    response = await client.post(
+                        "/recipes/ingest",
+                        data={
+                            "csrf_token": auth_session.csrf_token,
+                            "url": f"https://recipes.example/{path}",
+                        },
+                    )
+                    assert response.status_code == 200, response.text
+                    assert f'data-ingest-state="{state}"' in response.text
+                    assert f"https://recipes.example/{path}" in response.text
+                    if path == "empty":
+                        assert "Optional LLM parsing is not configured." in response.text
+                    else:
+                        assert "Some recipe timing information could not be interpreted." in response.text
+                        assert 'name="ingest_state" value="partial"' in response.text
+                        invalid_save = await client.post(
+                            "/recipes",
+                            data={
+                                "csrf_token": auth_session.csrf_token,
+                                "ingest_state": "partial",
+                                "ingest_message": "Some recipe fields were found.",
+                                "parse_notes": "Some recipe timing information could not be interpreted.",
+                                "source_url": "https://recipes.example/partial",
+                                "extraction_method": "microdata",
+                                "title": "Berry Tart",
+                                "sections[0][heading]": "Ingredients",
+                                "sections[0][kind]": "ingredients",
+                                "sections[0][lines][0][raw_text]": "2 cups berries",
+                            },
+                        )
+                        assert invalid_save.status_code == 400
+                        assert 'data-ingest-state="partial"' in invalid_save.text
+                        assert "Some recipe timing information could not be interpreted." in invalid_save.text
+                assert "Berry Tart" in response.text
+        finally:
+            async with session_scope() as db:
+                await db.execute(delete(Session).where(Session.user_id == user_id))
+                await db.execute(delete(User).where(User.id == user_id))
+            await get_engine().dispose()
+            get_settings.cache_clear()
+
+    asyncio.run(run())
+
+
+def test_save_stores_remote_image_only_in_local_media(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("DEBUG", "false")
+    monkeypatch.setenv("SECRET_KEY", "task15-test-secret")
+    monkeypatch.setenv("MEDIA_DIR", str(tmp_path))
+    from cookbook.config import get_settings
+
+    get_settings.cache_clear()
+    image_buffer = io.BytesIO()
+    Image.new("RGB", (2, 2), color="tomato").save(image_buffer, format="PNG")
+    image_content = image_buffer.getvalue()
+
+    async def fake_image(url: str, **kwargs):
+        return image_content, "image/png"
+
+    monkeypatch.setattr(recipe_routes, "fetch_public_bytes", fake_image)
+
+    async def run() -> None:
+        app = create_app()
+        user_id = str(uuid.uuid4())
+        source_url = f"https://recipes.example/{uuid.uuid4().hex}"
+        recipe_id: str | None = None
+        try:
+            async with session_scope() as db:
+                db.add(
+                    User(
+                        id=user_id,
+                        username=f"task15-{uuid.uuid4().hex}",
+                        password_hash="test-only",
+                        role="editor",
+                        is_active=True,
+                    )
+                )
+                category_id = (
+                    await db.execute(
+                        select(Category.id).where(Category.name == "Breakfast")
+                    )
+                ).scalar_one()
+            raw_token, auth_session = await create_session(
+                user_id, settings=app.state.settings
+            )
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                client.cookies.set(session_cookie_name(secure=False), raw_token)
+                response = await client.post(
+                    "/recipes",
+                    data={
+                        "csrf_token": auth_session.csrf_token,
+                        "title": "Local image pie",
+                        "category_ids": category_id,
+                        "source_url": source_url,
+                        "extraction_method": "jsonld",
+                        "hero_image": "https://images.example/pie.png",
+                        "sections[0][heading]": "Ingredients",
+                        "sections[0][kind]": "ingredients",
+                        "sections[0][lines][0][raw_text]": "1 cup pumpkin",
+                    },
+                )
+                assert response.status_code == 303, response.text
+                async with session_scope() as db:
+                    recipe = (
+                        await db.execute(
+                            select(Recipe).where(Recipe.source_url == source_url)
+                        )
+                    ).scalar_one()
+                    recipe_id = recipe.id
+                    image_path = recipe.image_path
+                    assert image_path is not None
+                    assert image_path.startswith("recipes/")
+                local_image = tmp_path / image_path
+                assert local_image.is_file()
+                served = await client.get(f"/media/{image_path}")
+                assert served.status_code == 200
+                assert served.headers["content-type"] == "image/png"
+                assert served.content == image_content
+        finally:
+            async with session_scope() as db:
+                if recipe_id:
+                    await db.execute(delete(Recipe).where(Recipe.id == recipe_id))
+                else:
+                    await db.execute(delete(Recipe).where(Recipe.source_url == source_url))
+                await db.execute(delete(Session).where(Session.user_id == user_id))
+                await db.execute(delete(User).where(User.id == user_id))
+            await get_engine().dispose()
+            get_settings.cache_clear()
 
     asyncio.run(run())
 

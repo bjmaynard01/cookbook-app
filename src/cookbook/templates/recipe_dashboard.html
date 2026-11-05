@@ -20,6 +20,11 @@
     <div><h2>Recipe editor</h2><p class="muted">{{ recipes|length }} recipes</p></div>
     <a href="/recipes/new" role="button">New recipe</a>
 </div>
+<form class="filters" method="post" action="/recipes/ingest">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Import from a recipe URL<input type="url" name="url" required maxlength="2000" placeholder="https://example.com/recipe"></label>
+    <button type="submit">Fetch recipe</button>
+</form>
 {% if request.query_params.get('deleted') == '1' %}<p role="status">Recipe deleted.</p>{% endif %}
 <form class="filters" method="get" action="/edit">
     <label>Search<input type="search" name="q" value="{{ q }}" placeholder="Title, description, or source"></label>

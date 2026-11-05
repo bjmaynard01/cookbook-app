@@ -81,6 +81,9 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = Field(
         default=10, alias="LLM_TIMEOUT_SECONDS", gt=0, le=10
     )
+    ingest_max_concurrent: int = Field(
+        default=4, alias="INGEST_MAX_CONCURRENT", ge=1, le=32
+    )
 
     # --- bootstrap owner account (CLI) ---
     first_admin_password: str | None = Field(default=None, alias="FIRST_ADMIN_PASSWORD", repr=False)

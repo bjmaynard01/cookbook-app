@@ -12,6 +12,7 @@ from cookbook.recipes.ingest import (
     FetchTimeoutError,
     FetchTooLargeError,
     UnsafeURLError,
+    fetch_public_bytes,
     fetch_page,
     validate_url,
 )
@@ -27,6 +28,63 @@ class AsyncChunks(httpx.AsyncByteStream):
 
     async def aclose(self) -> None:
         return None
+
+
+@pytest.mark.asyncio
+async def test_fetch_public_bytes_accepts_bounded_image_payload(monkeypatch) -> None:
+    request_headers = []
+
+    async def public_ip(host: str, port: int) -> list[str]:
+        return ["1.1.1.1"]
+
+    def handler(request):
+        request_headers.append(request.headers)
+        return httpx.Response(
+            200,
+            headers={"content-type": "image/png", "content-length": "4"},
+            stream=AsyncChunks([b"PNG!"]),
+            request=request,
+        )
+
+    monkeypatch.setattr(ingest, "resolve_public_addresses", public_ip)
+    mock_transport(monkeypatch, handler)
+
+    content, media_type = await fetch_public_bytes("https://images.example/pie.png", max_bytes=8)
+
+    assert content == b"PNG!"
+    assert media_type == "image/png"
+    assert request_headers[0]["accept"] == "image/jpeg,image/png,image/webp"
+    assert request_headers[0]["accept-encoding"] == "identity"
+
+
+@pytest.mark.asyncio
+async def test_fetch_public_bytes_revalidates_redirect_destination(monkeypatch) -> None:
+    requests: list[str] = []
+
+    async def resolve(host: str, port: int) -> list[str]:
+        return ["10.0.0.8"] if host == "private.example" else ["1.1.1.1"]
+
+    def handler(request):
+        requests.append(str(request.url))
+        return httpx.Response(
+            302,
+            headers={"location": "http://private.example/image.png"},
+            request=request,
+        )
+
+    monkeypatch.setattr(ingest, "resolve_public_addresses", resolve)
+    mock_transport(monkeypatch, handler)
+
+    with pytest.raises(UnsafeURLError):
+        await fetch_public_bytes("https://images.example/start.png", max_bytes=8)
+
+    assert requests == ["https://images.example/start.png"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_public_bytes_rejects_private_destination() -> None:
+    with pytest.raises(UnsafeURLError):
+        await fetch_public_bytes("http://127.0.0.1/private.png", max_bytes=8)
 
 
 @pytest.mark.asyncio

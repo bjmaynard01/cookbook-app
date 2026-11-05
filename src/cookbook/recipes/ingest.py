@@ -14,7 +14,10 @@ import httpx
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 MAX_REDIRECTS = 5
 FETCH_TIMEOUT_SECONDS = 20.0
+ASSET_TIMEOUT_SECONDS = 10.0
+MAX_ASSET_BYTES = 10 * 1024 * 1024
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
+_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 _USER_AGENT = (
     "Mozilla/5.0 (compatible; MaynardCookbook/1.0; +https://cookbook.maynardfolks.com)"
 )
@@ -54,6 +57,7 @@ class FetchedPage:
     content_type: str
     html: str
     title: str = ""
+    site_name: str | None = None
     description: str | None = None
     canonical_url: str | None = None
     og_image: str | None = None
@@ -303,3 +307,86 @@ async def fetch_page(
         raise FetchError("The recipe source returned an invalid HTTP response.") from exc
     except httpx.RequestError as exc:
         raise FetchError("The recipe source could not be fetched.") from exc
+
+
+async def fetch_public_bytes(
+    url: str,
+    *,
+    max_bytes: int,
+    timeout: float = ASSET_TIMEOUT_SECONDS,
+    max_redirects: int = MAX_REDIRECTS,
+) -> tuple[bytes, str]:
+    """Fetch a bounded public image, validating DNS and every redirect hop."""
+    if (
+        max_bytes <= 0
+        or max_bytes > MAX_ASSET_BYTES
+        or timeout <= 0
+        or timeout > ASSET_TIMEOUT_SECONDS
+        or max_redirects < 0
+        or max_redirects > MAX_REDIRECTS
+    ):
+        raise ValueError("Asset fetch limits exceed the product caps.")
+
+    current_url = url
+    redirects = 0
+    try:
+        async with asyncio.timeout(timeout):
+            while True:
+                validated = await validate_url(current_url)
+                async with _make_client(validated) as client:
+                    client.headers.update(
+                        {
+                            "Accept": "image/jpeg,image/png,image/webp",
+                            "Accept-Encoding": "identity",
+                        }
+                    )
+                    async with client.stream("GET", validated.url) as response:
+                        if response.status_code in _REDIRECT_STATUSES:
+                            location = response.headers.get("location")
+                            if not location:
+                                raise FetchHTTPError("The image source returned an invalid redirect.")
+                            if redirects >= max_redirects:
+                                raise FetchHTTPError("The image source exceeded the redirect limit.")
+                            current_url = str(response.url.join(location))
+                            redirects += 1
+                            continue
+                        if not 200 <= response.status_code < 300:
+                            raise FetchHTTPError(
+                                f"The image source returned HTTP {response.status_code}."
+                            )
+                        content_type = (
+                            response.headers.get("content-type", "")
+                            .split(";", 1)[0]
+                            .strip()
+                            .casefold()
+                        )
+                        if content_type not in _IMAGE_CONTENT_TYPES:
+                            raise FetchHTTPError("The source did not return a supported image.")
+                        content_encoding = response.headers.get("content-encoding", "")
+                        if content_encoding.strip().casefold() not in {"", "identity"}:
+                            raise FetchHTTPError("The image source used an unsupported encoding.")
+                        content_length = response.headers.get("content-length")
+                        if content_length is not None:
+                            try:
+                                if int(content_length) > max_bytes:
+                                    raise FetchTooLargeError("The source image is too large.")
+                            except ValueError:
+                                pass
+                        body = bytearray()
+                        async for chunk in response.aiter_raw():
+                            if len(body) + len(chunk) > max_bytes:
+                                raise FetchTooLargeError("The source image is too large.")
+                            body.extend(chunk)
+                        return bytes(body), content_type
+    except TimeoutError as exc:
+        raise FetchTimeoutError("Fetching the source image exceeded the time limit.") from exc
+    except httpx.TimeoutException as exc:
+        raise FetchTimeoutError("Fetching the source image exceeded the time limit.") from exc
+    except httpx.InvalidURL as exc:
+        raise FetchHTTPError("The image source returned an invalid redirect.") from exc
+    except httpx.RemoteProtocolError as exc:
+        if str(exc).startswith("Invalid URL in location header"):
+            raise FetchHTTPError("The image source returned an invalid redirect.") from exc
+        raise FetchError("The image source returned an invalid HTTP response.") from exc
+    except httpx.RequestError as exc:
+        raise FetchError("The source image could not be fetched.") from exc

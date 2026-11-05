@@ -30,6 +30,18 @@ def test_extract_page_reads_document_metadata_and_visible_text() -> None:
     assert "ignore this" not in page.visible_text
 
 
+def test_extract_page_reads_og_site_name_for_source_provenance() -> None:
+    page = extract_page(
+        "<meta property=\"og:site_name\" content=\"Grandma's Kitchen\">",
+        source_url="https://recipes.example/pie",
+        final_url="https://recipes.example/pie",
+        status_code=200,
+        content_type="text/html",
+    )
+
+    assert page.site_name == "Grandma's Kitchen"
+
+
 def test_extract_page_preserves_each_json_ld_script_but_not_in_visible_text() -> None:
     page = extract_page(
         """<html><head>

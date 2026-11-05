@@ -22,14 +22,35 @@
     .danger { background:#9b2d2d; }
     .error { color:#9b2d2d; margin:.1rem 0 .65rem; }
     .message { padding:.7rem; background:#edf5e9; border:1px solid #c8dfbd; border-radius:6px; }
+    .ingest-notice { padding:.75rem 1rem; margin:1rem 0; border-radius:6px; background:#f4f1eb; border:1px solid #ded8ce; }
+    .ingest-notice h3 { margin:.1rem 0 .35rem; font-size:1.05rem; }
+    .ingest-notice p:last-child { margin-bottom:0; }
+    .source-note { color:#706d68; }
     @media(max-width:650px) { .form-grid { grid-template-columns:1fr; } .full { grid-column:auto; } }
 </style>
 <p><a href="/edit">← Back to recipes</a></p>
 <h2>{{ 'Edit recipe' if recipe_id else 'New recipe' }}</h2>
+{% if ingest_state == 'fetch-failed' %}<section class="ingest-notice" data-ingest-state="fetch-failed" role="alert"><h3>Could not fetch this recipe</h3><p>{{ ingest_message }}</p></section>{% endif %}
+{% if ingest_state == 'nothing-found' %}<section class="ingest-notice" data-ingest-state="nothing-found" role="status"><h3>No recipe details found</h3><p>{{ ingest_message }}</p>{% if draft.provenance and draft.provenance.source_url %}<p>Source: {{ draft.provenance.source_name or draft.provenance.source_url }}</p>{% endif %}{% if draft.parse_notes %}<ul>{% for note in draft.parse_notes %}<li>{{ note }}</li>{% endfor %}</ul>{% endif %}</section>{% endif %}
+{% if ingest_state == 'partial' %}<section class="ingest-notice" data-ingest-state="partial" role="status"><h3>Some recipe details were found</h3><p>{{ ingest_message }}</p>{% if draft.parse_notes %}<ul>{% for note in draft.parse_notes %}<li>{{ note }}</li>{% endfor %}</ul>{% endif %}</section>{% endif %}
+{% if ingest_state == 'full' %}<section class="ingest-notice" data-ingest-state="full" role="status"><h3>Recipe details were found</h3><p>{{ ingest_message }}</p>{% if draft.parse_notes %}<ul>{% for note in draft.parse_notes %}<li>{{ note }}</li>{% endfor %}</ul>{% endif %}</section>{% endif %}
+{% if draft.already_exists %}<p class="ingest-notice" role="status">A recipe from this source already exists — <a href="/recipes/{{ draft.already_exists.id }}/edit">{{ draft.already_exists.title }}</a>. You can still save this draft as another recipe.</p>{% endif %}
 {% if message %}<p class="message" role="status">{{ message }}</p>{% endif %}
 {% for field, error in errors.items() %}<p class="error" role="alert">{{ error }}</p>{% endfor %}
 <form method="post" action="{{ '/recipes/' ~ recipe_id if recipe_id else '/recipes' }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% if ingest_state %}<input type="hidden" name="ingest_state" value="{{ ingest_state }}"><input type="hidden" name="ingest_message" value="{{ ingest_message or '' }}">{% endif %}
+    {% if draft.provenance %}
+    <input type="hidden" name="source_system" value="{{ draft.provenance.source_system or '' }}">
+    <input type="hidden" name="source_id" value="{{ draft.provenance.source_id or '' }}">
+    <input type="hidden" name="source_url" value="{{ draft.provenance.source_url or '' }}">
+    <input type="hidden" name="source_name" value="{{ draft.provenance.source_name or '' }}">
+    <input type="hidden" name="extraction_method" value="{{ draft.provenance.extraction_method or '' }}">
+    <input type="hidden" name="imported_at" value="{{ draft.provenance.imported_at.isoformat() if draft.provenance.imported_at else '' }}">
+    <p class="source-note">Source: {{ draft.provenance.source_name or draft.provenance.source_url or 'Imported recipe' }}</p>
+    {% endif %}
+    {% if draft.hero_image %}<input type="hidden" name="hero_image" value="{{ draft.hero_image }}">{% endif %}
+    {% for note in draft.parse_notes %}<input type="hidden" name="parse_notes" value="{{ note }}">{% endfor %}
     <div class="form-grid">
         <label class="full">Title<input type="text" name="title" required maxlength="300" value="{{ form_values.get('title', draft.title) }}"></label>
         <label class="full">Description<textarea name="description">{{ form_values.get('description', draft.description or '') }}</textarea></label>

@@ -45,6 +45,7 @@ class _PageParser(HTMLParser):
         self._description: str | None = None
         self._og_description: str | None = None
         self._og_title: str | None = None
+        self._og_site_name: str | None = None
         self._canonical: str | None = None
         self._og_image: str | None = None
         self._in_title = False
@@ -71,6 +72,8 @@ class _PageParser(HTMLParser):
                 self._og_description = self._og_description or content
             elif key == "og:title" and content:
                 self._og_title = self._og_title or content
+            elif key == "og:site_name" and content:
+                self._og_site_name = self._og_site_name or content
             elif key == "og:image" and content:
                 self._og_image = self._og_image or content
         elif tag == "link":
@@ -145,6 +148,7 @@ class _PageParser(HTMLParser):
             content_type=content_type,
             html=html,
             title=title,
+            site_name=(self._og_site_name or "").strip() or None,
             description=_clean_text([description]) if description else None,
             canonical_url=_absolute_http_url(self._canonical, self.base_url),
             og_image=_absolute_http_url(self._og_image, self.base_url),
