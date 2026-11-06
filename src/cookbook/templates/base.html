@@ -12,11 +12,19 @@
         h1 { font-size: 1.5rem; margin: 0; }
         a { color: #7a4f1d; text-decoration: none; }
         a:hover { text-decoration: underline; }
+        .site-nav { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem .65rem; margin: 0 0 1.25rem; }
+        .site-nav a { color: #285e4c; font-weight: 600; padding: .35rem .55rem; border-radius: 999px; }
+        .site-nav a:hover, .site-nav a:focus-visible { background: #edf1e9; text-decoration: none; }
         label { display: block; margin-bottom: 0.25rem; font-weight: 600; }
         input { width: 100%; padding: 0.5rem 0.6rem; border: 1px solid #ccc; border-radius: 6px; font: inherit; margin-bottom: 1rem; }
         button { background: #7a4f1d; color: #fff; border: 0; padding: 0.6rem 1rem; border-radius: 6px; cursor: pointer; font: inherit; }
         button:hover { background: #5e3b13; }
         .alert { background: #fdecec; color: #a12d2d; border: 1px solid #f0c2c2; border-radius: 6px; padding: 0.75rem 1rem; margin-bottom: 1rem; }
+        @media (max-width: 560px) {
+            .site-nav { gap: .25rem .35rem; }
+            .site-nav a { padding: .4rem .45rem; }
+        }
+        @media print { .site-nav { display: none !important; } }
     </style>
     {% block head %}{% endblock %}
 </head>
@@ -31,6 +39,17 @@
             </form>
             {% endif %}
         </header>
+        <nav class="site-nav" aria-label="Primary navigation">
+            <a href="/">Home</a>
+            <a href="/#categories-title">Browse</a>
+            <a href="/search">Search</a>
+            {% if session_csrf %}
+            <a href="/edit">Recipes</a>
+            <a href="/recipes/new">New recipe</a>
+            {% elif request.url.path not in ["/login", "/setup"] %}
+            <a href="/login">Editor sign in</a>
+            {% endif %}
+        </nav>
         <main>
             {% block content %}{% endblock %}
         </main>

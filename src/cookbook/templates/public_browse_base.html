@@ -3,9 +3,6 @@
 <style>
   .container { width: min(100% - 2rem, 76rem); max-width: none; padding: 1rem 0 3rem; }
   .container > header { padding-bottom: .8rem; border-bottom: 1px solid #dedbd2; }
-  .browse-nav { display: flex; align-items: center; gap: 1rem; margin: 0 0 1.5rem; padding: .5rem 0; }
-  .browse-nav a { color: #285e4c; font-weight: 600; }
-  .browse-nav a:first-child { margin-right: auto; }
   .browse-page { color: #25241f; }
   .browse-page h1 { margin: 0 0 .5rem; font-size: clamp(2rem, 5vw, 3rem); line-height: 1.1; }
   .browse-page h2 { margin: 0 0 1rem; font-size: 1.45rem; }
@@ -47,7 +44,6 @@
   .empty-state { padding: 1.5rem; color: #5f5c53; background: #f3f1e9; border-radius: .65rem; }
   @media (max-width: 560px) {
     .container { width: min(100% - 1.25rem, 76rem); padding-top: .6rem; }
-    .browse-nav { gap: .7rem; font-size: .9rem; }
     .recipe-card { grid-template-columns: 5rem minmax(0, 1fr); gap: .7rem; padding: .65rem; }
     .recipe-card-media { height: 5rem; }
     .recipe-card h3 { font-size: 1rem; }
@@ -57,7 +53,7 @@
   }
   @media print {
     .container { width: auto; padding: 0; }
-    .container > header, .browse-nav, .browse-search, .browse-filters { display: none !important; }
+    .container > header, .site-nav, .browse-search, .browse-filters { display: none !important; }
     .recipe-card, .category-card { break-inside: avoid; box-shadow: none; }
     .recipe-card { grid-template-columns: 6rem 1fr; }
     .recipe-card-media { height: 5rem; }
@@ -66,10 +62,5 @@
 </style>
 {% endblock %}
 {% block content %}
-<nav class="browse-nav" aria-label="Public navigation">
-  <a href="/" aria-label="Cookbook home">Home</a>
-  <a href="/search">Search</a>
-  {% if session_csrf %}<a href="/edit">Edit recipes</a>{% else %}<a href="/login">Editor sign in</a>{% endif %}
-</nav>
 <div class="browse-page">{% block browse_content %}{% endblock %}</div>
 {% endblock %}

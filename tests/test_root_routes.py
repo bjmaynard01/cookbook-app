@@ -20,6 +20,12 @@ def test_signed_out_root_renders_public_home(monkeypatch) -> None:
             response = await client.get("/")
         assert response.status_code == 200
         assert "What would you like to cook?" in response.text
+        assert response.text.count('aria-label="Primary navigation"') == 1
+        assert 'href="/#categories-title">Browse</a>' in response.text
+        assert 'href="/search">Search</a>' in response.text
+        assert 'href="/login">Editor sign in</a>' in response.text
+        assert 'href="/edit">Recipes</a>' not in response.text
+        assert 'href="/recipes/new">New recipe</a>' not in response.text
         assert response.headers["cache-control"] == "public, max-age=300, s-maxage=600"
 
     try:

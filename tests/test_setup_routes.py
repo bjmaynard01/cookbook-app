@@ -41,6 +41,11 @@ def test_setup_page_rotates_browser_binding_and_closes_after_cli_creation(monkey
         from cookbook.auth import bootstrap
         first, second = await client.get("/setup"), await client.get("/setup")
         assert first.status_code == second.status_code == 200
+        assert first.text.count('aria-label="Primary navigation"') == 1
+        assert 'href="/">Home</a>' in first.text
+        assert 'href="/#categories-title">Browse</a>' in first.text
+        assert 'href="/search">Search</a>' in first.text
+        assert 'href="/login"' not in first.text
         assert cookies(first)["cookbook_csrf_pre"].value != cookies(second)["cookbook_csrf_pre"].value
         assert first.headers["cache-control"] == second.headers["cache-control"] == "private, no-store"
         assert token(first) and token(second)

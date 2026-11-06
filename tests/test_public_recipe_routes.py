@@ -144,6 +144,9 @@ def test_public_recipe_page_renders_readable_ordered_content_and_local_image(
                 assert response.status_code == 200, response.text
                 assert response.headers["cache-control"] == "public, max-age=300, s-maxage=600"
                 assert "set-cookie" not in response.headers
+                assert response.text.count('aria-label="Primary navigation"') == 1
+                assert 'href="/#categories-title">Browse</a>' in response.text
+                assert "@media print" in response.text and ".site-nav" in response.text
                 assert "Task 16 Sunday Pie" in response.text
                 assert "A short introduction for the cook." in response.text
                 assert response.text.count("A short introduction for the cook.") == 1
@@ -403,6 +406,8 @@ def test_public_home_renders_featured_categories_tags_and_search(monkeypatch, tm
                 response = await client.get("/")
                 assert response.status_code == 200, response.text
                 assert response.headers["cache-control"] == "public, max-age=300, s-maxage=600"
+                assert response.text.count('aria-label="Primary navigation"') == 1
+                assert 'href="/#categories-title">Browse</a>' in response.text
                 featured = response.text.split('id="featured-recipes"', 1)[1].split(
                     'id="categories"', 1
                 )[0]

@@ -68,6 +68,12 @@ def test_login_success_logout_form_and_header(monkeypatch):
         page = await client.get("/login")
         assert page.status_code == 200
         assert page.headers["cache-control"] == "private, no-store"
+        assert page.text.count('aria-label="Primary navigation"') == 1
+        assert 'href="/">Home</a>' in page.text
+        assert 'href="/#categories-title">Browse</a>' in page.text
+        assert 'href="/search">Search</a>' in page.text
+        assert 'href="/login"' not in page.text
+        assert 'href="/edit"' not in page.text
         pre = cookies(page)["cookbook_csrf_pre"]
         assert pre["httponly"] and pre["samesite"].lower() == "strict"
         assert pre["max-age"] == "900" and not pre["secure"]

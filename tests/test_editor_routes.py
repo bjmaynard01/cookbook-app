@@ -517,15 +517,28 @@ def test_editor_and_admin_can_open_private_dashboard_and_form(monkeypatch) -> No
                     assert root.status_code == 200
                     assert "What would you like to cook?" in root.text
                     assert 'href="/edit"' in root.text
+                    assert root.text.count('aria-label="Primary navigation"') == 1
+                    assert 'href="/#categories-title">Browse</a>' in root.text
+                    assert 'href="/recipes/new">New recipe</a>' in root.text
                     assert root.headers["cache-control"] == "private, no-store"
                     dashboard = await client.get("/edit")
                     assert dashboard.status_code == 200, dashboard.text
                     assert dashboard.headers["cache-control"] == "private, no-store"
                     assert "Recipe editor" in dashboard.text
+                    assert dashboard.text.count('aria-label="Primary navigation"') == 1
+                    assert 'action="/logout"' in dashboard.text
+                    assert 'href="/">Home</a>' in dashboard.text
+                    assert 'href="/search">Search</a>' in dashboard.text
+                    assert 'href="/edit">Recipes</a>' in dashboard.text
+                    assert 'href="/recipes/new">New recipe</a>' in dashboard.text
                     form = await client.get("/recipes/new")
                     assert form.status_code == 200, form.text
                     assert form.headers["cache-control"] == "private, no-store"
                     assert 'name="csrf_token"' in form.text
+                    assert form.text.count('aria-label="Primary navigation"') == 1
+                    assert 'href="/edit">Recipes</a>' in form.text
+                    assert 'href="/recipes/new">New recipe</a>' in form.text
+                    assert 'action="/logout"' in form.text
                     client.cookies.clear()
         finally:
             async with session_scope() as db:

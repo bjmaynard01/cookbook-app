@@ -192,6 +192,7 @@ def _form_context(
             "categories": categories,
             "selected_category_ids": selected_category_ids,
             "csrf_token": csrf_token,
+            "session_csrf": csrf_token,
             "recipe_id": recipe_id,
             "slug": slug,
             "errors": errors or {},
@@ -589,6 +590,7 @@ async def editor_dashboard(
             for recipe_id, name in rows:
                 category_names[recipe_id].append(name)
 
+    csrf_token = _csrf_token(request)
     response = templates.TemplateResponse(
         request,
         "recipe_dashboard.html",
@@ -601,7 +603,8 @@ async def editor_dashboard(
             "category_id": category_id,
             "tag_id": tag_id,
             "sort": selected_sort,
-            "csrf_token": _csrf_token(request),
+            "csrf_token": csrf_token,
+            "session_csrf": csrf_token,
             "editor": editor,
         },
     )
