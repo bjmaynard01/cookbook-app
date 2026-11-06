@@ -83,7 +83,12 @@ def _line_text(line: RecipeIngredientDraft | RecipeStepDraft) -> str:
     return line.body
 
 
-def validate_for_save(draft: RecipeDraft, *, category_names: Sequence[str]) -> RecipeSaveData:
+def validate_for_save(
+    draft: RecipeDraft,
+    *,
+    category_names: Sequence[str],
+    allow_missing_ingredients_for_import: bool = False,
+) -> RecipeSaveData:
     """Validate a draft for saving and return normalized save data.
 
     Raises RecipeValidationError carrying every field error found
@@ -117,7 +122,7 @@ def validate_for_save(draft: RecipeDraft, *, category_names: Sequence[str]) -> R
         elif section.kind == "steps":
             has_step = True
 
-    if not has_ingredient:
+    if not has_ingredient and not allow_missing_ingredients_for_import:
         field_errors["ingredients"] = "At least one ingredient line is required."
 
     if field_errors:

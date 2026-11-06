@@ -36,6 +36,8 @@ _QUANTITY = re.compile(
     r"(?:a|an)\s+(?:pinch|dash|handful|clove|can|package|stick|pound|cup|tablespoon|teaspoon)\b)",
     re.IGNORECASE,
 )
+_STEP_NUMBER = re.compile(r"^\s*\(?\d+(?:[.)]|\ufe0f?\u20e3)\s*")
+_LIST_BULLET = re.compile(r"^\s*[-*•]\s*")
 _EXPLICIT_HEADING = re.compile(
     r"^\s*(ingredients?|directions?|instructions?|preparation|method|steps?)\s*:?\s*(.*)$",
     re.IGNORECASE,
@@ -234,13 +236,22 @@ def _parse_body(body: str) -> tuple[str | None, tuple[RecipeSectionDraft, ...], 
         else:
             target.lines.append(RecipeStepDraft(body=value))
 
-    # The discovery spike found that 320 of 389 source posts use plain text.
-    # Classify line-by-line so one body can contain both ingredients and steps.
-    strong_kinds = [
-        ("ingredients" if _QUANTITY.match(line) else
-         "steps" if _IMPERATIVE.match(line) or len(line) > 60 else None)
-        for line in lines
-    ]
+    # Many WordPress bodies are plain text. Classify line-by-line so one body
+    # can contain both ingredients and steps.
+    strong_kinds = []
+    for line in lines:
+        marker = _STEP_NUMBER.match(line)
+        instruction = _LIST_BULLET.sub("", _STEP_NUMBER.sub("", line))
+        if marker and not _QUANTITY.match(instruction):
+            strong_kinds.append("steps")
+        elif _IMPERATIVE.match(instruction):
+            strong_kinds.append("steps")
+        elif _QUANTITY.match(line):
+            strong_kinds.append("ingredients")
+        elif len(line) > 60:
+            strong_kinds.append("steps")
+        else:
+            strong_kinds.append(None)
     for index, line in enumerate(lines):
         note = _EXPLICIT_NOTE_HEADING.match(line)
         if note:

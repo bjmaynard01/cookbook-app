@@ -110,3 +110,22 @@ def test_plain_text_recipe_splits_at_line_level_and_keeps_intro_description() ->
         ("ingredients", "Ingredients"), ("ingredients", "Filling"), ("steps", "Directions"),
     ]
     assert [line.raw_text for line in rolls.sections[0].lines] == ["2 cups flour", "1 cup milk"]
+
+
+def test_numbered_directions_are_steps_not_quantity_lines() -> None:
+    replacement = (
+        b"<content:encoded><![CDATA[Ingredients:\\n- Noodles (2 portions)\\n2 cups flour\\nDirections:\\n1. Cook until hot.\\n2"
+        + "\ufe0f\u20e3".encode()
+        + b" Serve warm.]]></content:encoded>"
+    )
+    numbered = WXR_FIXTURE.replace(
+        b"<content:encoded><![CDATA[<p>A family favorite.</p><p>Ingredients :</p><p>2 cups flour</p><p>1 cup milk</p><p>Filling:</p><p>3 tbsp butter</p><p>Directions :</p><p>Mix the flour and milk.</p><p>Bake until golden.</p>]]></content:encoded>",
+        replacement,
+    ).replace(b"\\n", bytes((10,)))
+    rolls = parse_wxr_bytes(numbered).recipes[0]
+
+    ingredients = next(section for section in rolls.sections if section.heading == "Ingredients")
+    assert [line.raw_text for line in ingredients.lines] == ["- Noodles (2 portions)", "2 cups flour"]
+    directions = next(section for section in rolls.sections if section.heading == "Directions")
+    assert directions.kind == "steps"
+    assert [line.body for line in directions.lines] == ["1. Cook until hot.", "2\ufe0f\u20e3 Serve warm."]

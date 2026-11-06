@@ -1,10 +1,10 @@
 # Cookbook App Build Roadmap
 
 **Source of truth:** `PRODUCT.md` and the approved design in `docs/superpowers/specs/2026-09-20-cookbook-design.md`.
-**Updated:** 2026-11-05
+**Updated:** 2026-11-06
 **Planned scope:** 20 delivery tasks. Task boundaries can be revised if the owner changes product scope; this count covers the current v1 specification.
 
-This roadmap gives the project one ordered task sheet. Each task may have a separate design and implementation plan. Tasks 1–18 are complete; Task 19's importer is implemented and fixture-verified, with the real corpus run pending its WXR export. No task adds features explicitly excluded from the approved v1 spec.
+This roadmap gives the project one ordered task sheet. Each task may have a separate design and implementation plan. Tasks 1–18 are complete. Task 19's real corpus has been imported and verified; one original image remains unavailable after the safe fetcher rejected its redirect. No task adds features explicitly excluded from the approved v1 spec.
 
 ## Branch workflow
 
@@ -32,12 +32,12 @@ This roadmap gives the project one ordered task sheet. Each task may have a sepa
 | 16 | Public recipe page and legacy redirects | Complete | Anonymous responsive `/r/<slug>` reading pages and exact stored-alias 301 redirects. [Plan](superpowers/plans/2026-11-05-public-recipe-page.md) |
 | 17 | Home, category, and tag browsing | Complete | Featured home index, ordered category/tag lanes, and public recipe lists with category time/tag narrowing. [Plan](superpowers/plans/2026-11-05-public-browsing.md) |
 | 18 | Search and result filtering | Complete | MariaDB FULLTEXT search with title/semantic/body ranking, partial matching, category/time/tag filters, and scoped zero-result suggestions. [Plan](superpowers/plans/2026-11-05-search-filtering.md). Benchmark tokenizer behavior after Task 19 imports the real corpus. |
-| 19 | WordPress migration importer | Implemented; corpus run pending | Dry-run-first WXR parser/importer, original media transfer, aliases, resumable audit, and verification gate; awaiting the untracked WXR export for corpus parity and migration. [Plan](superpowers/plans/2026-11-06-wordpress-importer.md) |
+| 19 | WordPress migration importer | Imported and verified; one image pending owner acceptance | 391 published posts, category pages, aliases, and 181 validated original images imported. Four ingredient-less posts are recorded as owner-approved exceptions; one unsafe image redirect is listed in the verification report. [Plan](superpowers/plans/2026-11-06-wordpress-importer.md) |
 | 20 | Backup, restore, and production cutover gate | Planned | Explicit-target backup/restore tooling and the required isolated restore and migration verification. |
 
 ## Order and dependencies
 
-Tasks 1–9 establish the schema, security, draft contract, and persistence layer. Task 10 uses those services to create the first editor workflow. Task 11 supplies image storage to both manual editing and later ingestion/import. Tasks 12–15 build ingestion in bounded stages. Task 12 safely fetches public HTML and extracts metadata, visible text, and raw JSON-LD blocks; Task 13 interprets recipe JSON-LD and microdata; Task 14 adds the optional 10-second LLM fallback; and Task 15 connects ingestion to the review and save form. Tasks 16–18 implement the public reading and discovery experience. Task 19 supplies the importer and will migrate the collection once the WXR export is available. Task 20 verifies restore and cutover requirements; production cutover waits for the real-corpus import verification.
+Tasks 1–9 establish the schema, security, draft contract, and persistence layer. Task 10 uses those services to create the first editor workflow. Task 11 supplies image storage to both manual editing and later ingestion/import. Tasks 12–15 build ingestion in bounded stages. Task 12 safely fetches public HTML and extracts metadata, visible text, and raw JSON-LD blocks; Task 13 interprets recipe JSON-LD and microdata; Task 14 adds the optional 10-second LLM fallback; and Task 15 connects ingestion to the review and save form. Tasks 16–18 implement the public reading and discovery experience. Task 19 migrated and verified the current WXR collection. Task 20 verifies restore and cutover requirements; production cutover waits for the backup/restore gate.
 
 ## Completion gates
 

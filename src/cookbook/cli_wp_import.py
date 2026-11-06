@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from .config import cli_config
-from .wp_import import run_wp_import, verify_wp_run
+from .wp_import import retry_failed_wp_images, run_wp_import, verify_wp_run
 
 
 async def _run(args, cfg) -> dict:
@@ -19,6 +19,10 @@ async def _run(args, cfg) -> dict:
         factory = async_sessionmaker(engine, expire_on_commit=False)
         if args.verify:
             return await verify_wp_run(factory, args.run_id, media_dir=cfg.media_dir)
+        if args.retry_images:
+            return await retry_failed_wp_images(
+                factory, args.run_id, media_dir=cfg.media_dir, report_path=args.report,
+            )
         return await run_wp_import(
             factory,
             args.file,
@@ -32,9 +36,9 @@ async def _run(args, cfg) -> dict:
 
 
 def run_import_command(args) -> int:
-    if args.verify:
+    if args.verify or args.retry_images:
         if not args.run_id or args.file:
-            print("Use --verify --run <id> without --file.", file=sys.stderr)
+            print("Use --verify or --retry-images with --run <id> and without --file.", file=sys.stderr)
             return 2
     elif not args.file or args.run_id:
         print("Use --file <export.xml> for a dry-run or import.", file=sys.stderr)
@@ -48,5 +52,7 @@ def run_import_command(args) -> int:
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"WordPress import failed: {exc}", file=sys.stderr)
         return 1
-    print(json.dumps(result, indent=2, ensure_ascii=False))
+    # Windows terminals may still use a legacy code page (e.g. cp1252); keep
+    # stdout JSON ASCII-only so evidence such as "bread → baking" never crashes.
+    print(json.dumps(result, indent=2, ensure_ascii=True))
     return 0 if result.get("passed", result.get("status") != "failed") else 1

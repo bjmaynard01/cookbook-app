@@ -367,7 +367,12 @@ async def _create_sections(
         await session.flush()
 
 
-def _revalidate(save_data: RecipeSaveData, category_names: list[str]) -> RecipeSaveData:
+def _revalidate(
+    save_data: RecipeSaveData,
+    category_names: list[str],
+    *,
+    allow_missing_ingredients_for_import: bool = False,
+) -> RecipeSaveData:
     """Re-run the Task 8 save-readiness gate through a reconstructed draft.
 
     The service does not trust its inputs to have already passed validation —
@@ -390,7 +395,11 @@ def _revalidate(save_data: RecipeSaveData, category_names: list[str]) -> RecipeS
         provenance=save_data.provenance,
     )
     try:
-        return validate_for_save(draft, category_names=category_names)
+        return validate_for_save(
+            draft,
+            category_names=category_names,
+            allow_missing_ingredients_for_import=allow_missing_ingredients_for_import,
+        )
     except RecipeValidationError as exc:
         raise InvalidRecipeInput(exc.field_errors) from exc
 
@@ -455,6 +464,7 @@ async def create_recipe(
     category_ids: Sequence[str],
     actor_user_id: str | None = None,
     slug: str | None = None,
+    allow_missing_ingredients_for_import: bool = False,
 ) -> Recipe:
     """Create and persist a new recipe; returns the ORM object (flush only).
 
@@ -471,6 +481,9 @@ async def create_recipe(
     * ``data`` is re-validated (Task 8 ``validate_for_save``) against a
       reconstructed draft + the resolved category names; failures raise
       :class:`~cookbook.recipes.errors.InvalidRecipeInput`.
+    * ``allow_missing_ingredients_for_import`` is reserved for the explicit,
+      owner-approved WXR exceptions; all other recipe writes keep the normal
+      required-ingredient rule.
     * Every VARCHAR field the service would write is width-checked against
       the model widths (no truncation); failures raise
       :class:`~cookbook.recipes.errors.InvalidRecipeInput` with every
@@ -526,7 +539,9 @@ async def create_recipe(
 
     # --- re-validate against the selected existing category names ----
     save_data = _revalidate(
-        data, category_names=[c.name for c in category_rows]
+        data,
+        category_names=[c.name for c in category_rows],
+        allow_missing_ingredients_for_import=allow_missing_ingredients_for_import,
     )
 
     # --- width checks on everything the service writes --------------

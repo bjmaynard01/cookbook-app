@@ -67,6 +67,22 @@ def test_save_reports_missing_category_and_ingredient_together() -> None:
     assert set(raised.value.field_errors) == {"categories", "ingredients"}
 
 
+def test_import_exception_can_preserve_a_source_post_without_ingredient_lines() -> None:
+    draft = RecipeDraft(
+        title="Oven Baked Tacos",
+        sections=[RecipeSectionDraft(kind="steps", lines=[RecipeStepDraft(body="Bake until hot.")])],
+    )
+
+    with pytest.raises(RecipeValidationError):
+        validate_for_save(draft, category_names=["Main Dishes"])
+
+    saved = validate_for_save(
+        draft, category_names=["Main Dishes"], allow_missing_ingredients_for_import=True,
+    )
+    assert saved.title == "Oven Baked Tacos"
+    assert saved.sections[0].lines[0].body == "Bake until hot."
+
+
 def test_blank_ingredient_lines_do_not_satisfy_required_ingredient() -> None:
     draft = RecipeDraft(
         title="Soup",

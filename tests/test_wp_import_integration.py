@@ -14,17 +14,22 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from test_wp_import import WXR_FIXTURE
 from cookbook.config import cli_config
 from cookbook.models import Category, MigrationRecipeLog, MigrationRun, Recipe, RecipeUrlAlias, recipe_categories
-from cookbook.wp_import import run_wp_import, verify_wp_run
+from cookbook.wp_import import retry_failed_wp_images, run_wp_import, verify_wp_run
 
 
 def _full_fixture() -> tuple[bytes, set[str], set[str]]:
     token = uuid.uuid4().int % 80_000_000 + 10_000_000
-    post_ids = {str(token), str(token + 1)}
+    post_ids = {"210", str(token + 1)}
     page_ids = {slug: str(token + 2 + index) for index, slug in enumerate((
         "main-dishes", "drinks", "desserts", "side-dishes", "appetizers",
         "baking", "fermentation", "breakfast",
     ))}
-    fixture = WXR_FIXTURE.replace(b"<wp:post_id>100</wp:post_id>", f"<wp:post_id>{token}</wp:post_id>".encode())
+    fixture = WXR_FIXTURE.replace(b"<wp:post_id>100</wp:post_id>", b"<wp:post_id>210</wp:post_id>")
+    fixture = fixture.replace(b"<title>Bread &amp; Butter Rolls</title>", b"<title>Oven Baked Tacos</title>")
+    fixture = fixture.replace(
+        b"<p>A family favorite.</p><p>Ingredients :</p><p>2 cups flour</p><p>1 cup milk</p><p>Filling:</p><p>3 tbsp butter</p><p>Directions :</p><p>Mix the flour and milk.</p><p>Bake until golden.</p>",
+        b"<p>Brown the beef, then drain it.</p><p>Sprinkle cheese and bake until hot.</p>",
+    )
     fixture = fixture.replace(b"<wp:post_id>101</wp:post_id>", f"<wp:post_id>{token + 1}</wp:post_id>".encode())
     fixture = fixture.replace(b"<wp:post_id>16</wp:post_id>", f"<wp:post_id>{page_ids['breakfast']}</wp:post_id>".encode())
     fixture = fixture.replace(
@@ -64,9 +69,14 @@ def test_apply_resume_and_verify_on_isolated_mariadb(monkeypatch) -> None:
     Image.new("RGB", (3, 3), "red").save(buffer, format="JPEG")
     jpeg = buffer.getvalue()
 
+    ribs_attempts = 0
+
     async def fake_fetch(url: str, *, max_bytes: int):
+        nonlocal ribs_attempts
         if url.endswith("ribs-original.jpg"):
-            return b"not an image", "image/jpeg"
+            ribs_attempts += 1
+            if ribs_attempts == 1:
+                return b"not an image", "image/jpeg"
         return jpeg, "image/jpeg"
 
     monkeypatch.setattr("cookbook.wp_import.fetch_public_bytes", fake_fetch)
@@ -86,15 +96,45 @@ def test_apply_resume_and_verify_on_isolated_mariadb(monkeypatch) -> None:
             assert dry_run["mode"] == "dry-run"
             assert dry_run["published_posts"] == 2
             assert dry_run["missing_category_pages"] == []
+            assert dry_run["approved_exceptions"] == [
+                {"source_post_id": "210", "title": "Oven Baked Tacos", "code": "missing_ingredient_lines"}
+            ]
             async with factory() as session:
                 assert await session.scalar(select(MigrationRun.id).where(
                     MigrationRun.file_sha256 == hashlib.sha256(content).hexdigest()
                 )) is None
                 assert (await session.scalar(select(Category.id).where(Category.slug == "others")) is not None) == had_others
 
+            unapproved_source = work_dir / "unapproved.xml"
+            unapproved_content = content.replace(b"<wp:post_id>210</wp:post_id>", b"<wp:post_id>211</wp:post_id>")
+            unapproved_source.write_bytes(unapproved_content)
+            try:
+                await run_wp_import(factory, unapproved_source, media_dir=media_dir, apply=True)
+            except ValueError as exc:
+                assert "owner-approved exception" in str(exc)
+            else:
+                raise AssertionError("An unapproved missing-ingredient post was applied.")
+            async with factory() as session:
+                assert await session.scalar(select(MigrationRun.id).where(
+                    MigrationRun.file_sha256 == hashlib.sha256(unapproved_content).hexdigest()
+                )) is None
+
             first = await run_wp_import(factory, source, media_dir=media_dir, apply=True)
-            assert first["recipes_imported"] == 2 and first["recipes_errors"] == 0
+            async with factory() as session:
+                current_logs = list((await session.execute(select(MigrationRecipeLog).where(
+                    MigrationRecipeLog.run_id == first["run_id"],
+                ))).scalars())
+            assert first["recipes_imported"] == 2 and first["recipes_errors"] == 0, [
+                (log.source_post_id, log.outcome, log.detail) for log in current_logs
+            ]
             assert first["images_ok"] == 1 and first["images_failed"] == 1
+
+            retried = await retry_failed_wp_images(factory, first["run_id"], media_dir=media_dir)
+            assert retried["images_retried"] == 1
+            assert retried["images_ok"] == 2 and retried["images_failed"] == 0
+            already_ok = await retry_failed_wp_images(factory, first["run_id"], media_dir=media_dir)
+            assert already_ok["images_retried"] == 0
+            assert already_ok["images_ok"] == 2 and already_ok["images_failed"] == 0
 
             second = await run_wp_import(factory, source, media_dir=media_dir, apply=True, resume=True)
             assert second["recipes_imported"] == 0 and second["recipes_skipped"] == 2
@@ -102,17 +142,19 @@ def test_apply_resume_and_verify_on_isolated_mariadb(monkeypatch) -> None:
 
             verified = await verify_wp_run(factory, second["run_id"], media_dir=media_dir)
             assert verified["passed"] is True
+            assert verified["checks"]["approved_exceptions_logged"] is True
             first_verified = await verify_wp_run(factory, first["run_id"], media_dir=media_dir)
             assert first_verified["passed"] is True
             assert first_verified["checks"]["image_accounting_matches"] is True
-            assert len(first_verified["checks"]["image_failures"]) == 1
+            assert first_verified["checks"]["image_failures"] == []
+            assert first_verified["checks"]["approved_exceptions_logged"] is True
 
             async with factory() as session:
                 recipes = list((await session.execute(select(Recipe).where(
                     Recipe.source_system == "wordpress", Recipe.source_id.in_(post_ids),
                 ))).scalars())
                 assert len(recipes) == 2
-                assert sum(bool(recipe.image_path) for recipe in recipes) == 1
+                assert sum(bool(recipe.image_path) for recipe in recipes) == 2
         finally:
             digest = hashlib.sha256(content).hexdigest()
             async with factory() as session:
@@ -156,4 +198,5 @@ def test_apply_resume_and_verify_on_isolated_mariadb(monkeypatch) -> None:
             recipe_image_dir.rmdir()
             media_dir.rmdir()
         source.unlink(missing_ok=True)
+        (work_dir / "unapproved.xml").unlink(missing_ok=True)
         work_dir.rmdir()

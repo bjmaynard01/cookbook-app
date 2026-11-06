@@ -45,13 +45,14 @@ The importer is read-only by default. Review a JSON plan before applying it:
 uv run cookbook import-wp --file /path/to/wordpress-export.xml --dry-run --report migration-report.json
 uv run cookbook import-wp --file /path/to/wordpress-export.xml --apply --report migration-report.json
 uv run cookbook import-wp --file /path/to/wordpress-export.xml --resume
+uv run cookbook import-wp --retry-images --run <migration-run-id> --report image-retry-report.json
 uv run cookbook import-wp --verify --run <migration-run-id>
 ```
 
-The WXR export is deliberately not stored in Git. The real import and its
-corpus-parity verification remain pending until that file is available and its
-dry-run report is reviewed. The report flags the “Pinto Bean Recipes” post as a
-collection while preserving it as a single source record.
+The WXR export is deliberately not stored in Git. `--retry-images` retries only
+failed original-image fetches for a completed run, and refuses a source whose
+hash has changed. The 2026-11-06 corpus was imported and verified; one image
+with an unsafe redirect remains listed in the verification report.
 
 ## Development checks
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import os
 import tempfile
@@ -34,10 +35,36 @@ CATEGORY_NAMES = {
 OWNER_REVIEW_POSTS = {
     "1950": "Pinto Bean Recipes is a collection; preserve it as one source post and flag it for owner review.",
 }
+OWNER_APPROVED_MISSING_INGREDIENT_POSTS = {
+    "210": ("Oven Baked Tacos", "Source directions are preserved; no separate ingredient list was published."),
+    "331": ("Pumpkin Waffles with Apple Cider Maple Syrup", "Source directions are preserved; no separate ingredient list was published."),
+    "342": ("MaMaw Pies", "The published source has no readable body; preserve its title and metadata without inventing ingredients."),
+    "870": ("Oven Roasted Sausage & Potatoes", "Source directions are preserved; no separate ingredient list was published."),
+}
+MISSING_INGREDIENT_EXCEPTION = "missing_ingredient_lines"
 
 
 def _line_count(post: WxrPost, kind: str) -> int:
     return sum(len(section.lines) for section in post.sections if section.kind == kind)
+
+
+def _approved_missing_ingredient_reason(post: WxrPost) -> str | None:
+    approved = OWNER_APPROVED_MISSING_INGREDIENT_POSTS.get(post.post_id)
+    if not approved or html.unescape(post.title) != approved[0]:
+        return None
+    if _line_count(post, "ingredients") != 0:
+        return None
+    return "Owner-approved missing-ingredient exception: " + approved[1]
+
+
+def _owner_review_flags(post: WxrPost) -> list[str]:
+    flags = []
+    if post.post_id in OWNER_REVIEW_POSTS:
+        flags.append(OWNER_REVIEW_POSTS[post.post_id])
+    exception = _approved_missing_ingredient_reason(post)
+    if exception:
+        flags.append(exception)
+    return flags
 
 
 def _allocate_slug(title: str, occupied: set[str]) -> tuple[str, bool]:
@@ -80,9 +107,12 @@ def build_import_report(
             slug, collision = source_slugs[post.post_id], False
         else:
             slug, collision = _allocate_slug(post.title, occupied)
-        warnings = list(post.warnings)
-        if post.post_id in OWNER_REVIEW_POSTS:
-            warnings.append(OWNER_REVIEW_POSTS[post.post_id])
+        review_flags = _owner_review_flags(post)
+        warnings = list(post.warnings) + review_flags
+        approved_exceptions = (
+            [MISSING_INGREDIENT_EXCEPTION]
+            if _approved_missing_ingredient_reason(post) else []
+        )
         rows.append({
             "source_post_id": post.post_id,
             "title": post.title,
@@ -113,7 +143,8 @@ def build_import_report(
             ),
             "image_url": post.image_url,
             "warnings": warnings,
-            "review_flags": [OWNER_REVIEW_POSTS[post.post_id]] if post.post_id in OWNER_REVIEW_POSTS else [],
+            "review_flags": review_flags,
+            "approved_exceptions": approved_exceptions,
         })
     pages = [
         {"source_id": source_id, "category": slug, "path": path,
@@ -131,8 +162,12 @@ def build_import_report(
         "category_pages": pages,
         "missing_category_pages": sorted(required_pages - present),
         "owner_review_flags": [
-            {"source_post_id": row["source_post_id"], "title": row["title"], "detail": OWNER_REVIEW_POSTS[row["source_post_id"]]}
-            for row in rows if row["source_post_id"] in OWNER_REVIEW_POSTS
+            {"source_post_id": row["source_post_id"], "title": row["title"], "detail": flag}
+            for row in rows for flag in row["review_flags"]
+        ],
+        "approved_exceptions": [
+            {"source_post_id": row["source_post_id"], "title": row["title"], "code": exception}
+            for row in rows for exception in row["approved_exceptions"]
         ],
         "slug_collisions": [
             {"source_post_id": row["source_post_id"], "title": row["title"], "allocated_slug": row["slug"]}
@@ -214,7 +249,7 @@ async def _alias_if_free(
     await session.flush()
 
 
-def _validated_data(post: WxrPost):
+def _validated_data(post: WxrPost, *, allow_missing_ingredients_for_import: bool = False):
     draft = RecipeDraft(
         title=post.title,
         description=post.description,
@@ -226,7 +261,11 @@ def _validated_data(post: WxrPost):
             imported_at=datetime.now(timezone.utc).replace(tzinfo=None),
         ),
     )
-    return validate_for_save(draft, category_names=[CATEGORY_NAMES[slug] for slug in post.category_slugs])
+    return validate_for_save(
+        draft,
+        category_names=[CATEGORY_NAMES[slug] for slug in post.category_slugs],
+        allow_missing_ingredients_for_import=allow_missing_ingredients_for_import,
+    )
 
 
 async def _fetch_store_image(post: WxrPost, media_dir: Path) -> tuple[str | None, str | None]:
@@ -265,6 +304,17 @@ async def run_wp_import(
         write_import_report(report_path, report)
     if not apply:
         return report
+
+    unapproved_missing_ingredients = [
+        post.post_id for post in document.recipes
+        if _line_count(post, "ingredients") == 0
+        and _approved_missing_ingredient_reason(post) is None
+    ]
+    if unapproved_missing_ingredients:
+        raise ValueError(
+            "Posts without ingredient lines need an owner-approved exception before --apply: "
+            + ", ".join(unapproved_missing_ingredients[:20])
+        )
 
     async with factory() as session:
         available = set((await session.execute(select(Category.slug))).scalars())
@@ -326,19 +376,25 @@ async def run_wp_import(
                 async with factory() as session:
                     async with session.begin():
                         categories = await _ensure_categories(session)
+                        approved_exception = _approved_missing_ingredient_reason(post)
                         recipe = await create_recipe(
-                            session, _validated_data(post),
+                            session, _validated_data(
+                                post, allow_missing_ingredients_for_import=approved_exception is not None,
+                            ),
                             category_ids=[categories[slug].id for slug in post.category_slugs],
                             slug=next(row["slug"] for row in report["recipes"] if row["source_post_id"] == post.post_id),
+                            allow_missing_ingredients_for_import=approved_exception is not None,
                         )
                         recipe.published_date = post.published_date
                         recipe.image_path = image_path
                         await _alias_if_free(session, post.legacy_path, recipe_id=recipe.id)
                         detail = {"image": "failed" if image_error else ("ok" if image_path else "none"),
                                   "image_path": image_path, "image_error": image_error,
-                                  "warnings": list(post.warnings)}
-                        if post.post_id in OWNER_REVIEW_POSTS:
-                            detail["warnings"].append(OWNER_REVIEW_POSTS[post.post_id])
+                                  "warnings": list(post.warnings),
+                                  "approved_exceptions": (
+                                      [MISSING_INGREDIENT_EXCEPTION] if approved_exception else []
+                                  )}
+                        detail["warnings"].extend(_owner_review_flags(post))
                         session.add(MigrationRecipeLog(
                             run_id=run_id, source_post_id=post.post_id, recipe_id=recipe.id,
                             outcome="imported", detail=json.dumps(detail, ensure_ascii=False),
@@ -381,6 +437,114 @@ async def run_wp_import(
     return report
 
 
+async def retry_failed_wp_images(
+    factory: async_sessionmaker[AsyncSession],
+    run_id: str,
+    *,
+    media_dir: Path,
+    report_path: Path | None = None,
+) -> dict[str, Any]:
+    """Retry only failed original-image fetches for a completed import run.
+
+    Recipe text and metadata are never rewritten. A successful retry stores
+    the validated image and updates that post's existing migration audit entry.
+    """
+    async with factory() as session:
+        run = await session.get(MigrationRun, run_id)
+        if run is None:
+            raise ValueError("Migration run was not found.")
+        if run.status != "completed":
+            raise ValueError("Only a completed migration run can retry images.")
+        if not run.source_file:
+            raise ValueError("Migration run has no source WXR path.")
+        source = Path(run.source_file)
+        digest = run.file_sha256
+        logs = list((await session.execute(select(MigrationRecipeLog).where(
+            MigrationRecipeLog.run_id == run_id,
+            MigrationRecipeLog.outcome == "imported",
+        ))).scalars())
+
+    if not source.is_file():
+        raise ValueError("The source WXR file is unavailable for image retry.")
+    document, contents = parse_wxr(source)
+    if hashlib.sha256(contents).hexdigest() != digest:
+        raise ValueError("The source WXR changed since the migration run; image retry refused.")
+    posts = {post.post_id: post for post in document.recipes}
+    retried = 0
+
+    for original_log in logs:
+        try:
+            detail = json.loads(original_log.detail or "{}")
+        except (TypeError, ValueError) as exc:
+            raise ValueError("A migration audit entry is not valid JSON; image retry refused.") from exc
+        if detail.get("image") != "failed":
+            continue
+        post_id = str(original_log.source_post_id)
+        post = posts.get(post_id)
+        if post is None or not post.image_url:
+            raise ValueError(f"Failed image audit for source post {post_id} does not match the WXR.")
+
+        async with factory() as session:
+            current_path = (await session.execute(select(Recipe.image_path).where(
+                Recipe.source_system == "wordpress", Recipe.source_id == post_id,
+            ))).scalar_one_or_none()
+        if current_path:
+            continue
+
+        stored_path, image_error = await _fetch_store_image(post, media_dir)
+        if image_error or not stored_path:
+            continue
+        raced_with_edit = False
+        try:
+            async with factory() as session:
+                async with session.begin():
+                    recipe = (await session.execute(select(Recipe).where(
+                        Recipe.source_system == "wordpress", Recipe.source_id == post_id,
+                    ).with_for_update())).scalar_one_or_none()
+                    log = await session.get(MigrationRecipeLog, original_log.id)
+                    if recipe is None or log is None:
+                        raise ValueError(f"Imported recipe or audit entry for source post {post_id} disappeared.")
+                    if recipe.image_path:
+                        raced_with_edit = True
+                    else:
+                        recipe.image_path = stored_path
+                        detail.update({"image": "ok", "image_path": stored_path, "image_error": None})
+                        log.detail = json.dumps(detail, ensure_ascii=False)
+                        retried += 1
+        except Exception:
+            delete_stored_image(media_dir, stored_path)
+            raise
+        if raced_with_edit:
+            delete_stored_image(media_dir, stored_path)
+
+    async with factory() as session:
+        async with session.begin():
+            run = await session.get(MigrationRun, run_id)
+            logs = list((await session.execute(select(MigrationRecipeLog).where(
+                MigrationRecipeLog.run_id == run_id,
+                MigrationRecipeLog.outcome == "imported",
+            ))).scalars())
+            details = [json.loads(log.detail or "{}") for log in logs]
+            run.images_ok = sum(detail.get("image") == "ok" for detail in details)
+            run.images_failed = sum(detail.get("image") == "failed" for detail in details)
+            failures = [
+                {"source_post_id": log.source_post_id, "error": detail.get("image_error")}
+                for log, detail in zip(logs, details)
+                if detail.get("image") == "failed"
+            ]
+            result = {
+                "run_id": run_id,
+                "images_retried": retried,
+                "images_ok": run.images_ok,
+                "images_failed": run.images_failed,
+                "failures": failures,
+                "status": "completed" if not failures else "partial",
+            }
+    if report_path is not None:
+        write_import_report(report_path, result)
+    return result
+
+
 async def verify_wp_run(
     factory: async_sessionmaker[AsyncSession], run_id: str, *, media_dir: Path | None = None,
 ) -> dict[str, Any]:
@@ -413,6 +577,11 @@ async def verify_wp_run(
 
         alias_checks: list[bool] = []
         data_checks: list[bool] = []
+        approved_exception_posts = {
+            post.post_id: _approved_missing_ingredient_reason(post)
+            for post in document.recipes
+            if _approved_missing_ingredient_reason(post)
+        }
         imported_ids = {str(log.source_post_id) for log in logs if log.outcome == "imported"}
         for post in document.recipes:
             recipe_id = (await session.execute(select(Recipe.id).where(
@@ -434,13 +603,34 @@ async def verify_wp_run(
                 ).where(RecipeSection.recipe_id == recipe_id, RecipeSection.kind == "ingredients")
             )).scalar_one()
             alias_checks.append(has_alias)
-            data_checks.append(category_count > 0 and ingredient_count > 0)
+            data_checks.append(
+                category_count > 0
+                and (ingredient_count > 0 or post.post_id in approved_exception_posts)
+            )
         category_map = {row.slug: row.id for row in (await session.execute(select(Category))).scalars()}
         for _source_id, slug, path in document.category_pages:
             alias = (await session.execute(select(RecipeUrlAlias).where(RecipeUrlAlias.path == path))).scalar_one_or_none()
             alias_checks.append(alias is not None and alias.category_id == category_map.get(slug))
         checks["every_recipe_and_category_has_alias"] = all(alias_checks)
         checks["every_recipe_has_category_and_raw_ingredients"] = all(data_checks)
+        exception_audits = (await session.execute(
+            select(MigrationRecipeLog.source_post_id, MigrationRecipeLog.detail)
+            .join(MigrationRun, MigrationRun.id == MigrationRecipeLog.run_id)
+            .where(
+                MigrationRun.file_sha256 == run.file_sha256,
+                MigrationRecipeLog.outcome == "imported",
+                MigrationRecipeLog.source_post_id.in_(approved_exception_posts),
+            )
+        )).all() if approved_exception_posts else []
+        audited_exceptions = set()
+        for source_post_id, detail in exception_audits:
+            try:
+                exception_codes = json.loads(detail or "{}").get("approved_exceptions", [])
+            except (TypeError, ValueError):
+                exception_codes = []
+            if MISSING_INGREDIENT_EXCEPTION in exception_codes:
+                audited_exceptions.add(str(source_post_id))
+        checks["approved_exceptions_logged"] = audited_exceptions == set(approved_exception_posts)
 
         expected_images = sum(bool(post.image_url) for post in document.recipes if post.post_id in imported_ids)
         image_details = [
