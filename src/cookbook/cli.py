@@ -65,6 +65,12 @@ def _run_reset_password(args: argparse.Namespace) -> int:
     return run_account(args)
 
 
+def _run_wp_import(args: argparse.Namespace) -> int:
+    from .cli_wp_import import run_import_command
+
+    return run_import_command(args)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="cookbook",
@@ -127,6 +133,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="File whose first line is the new password.",
     )
     reset.set_defaults(handler=_run_reset_password)
+
+    wp_import = subparsers.add_parser(
+        "import-wp", help="Dry-run or import a WordPress WXR export."
+    )
+    wp_import.add_argument("--file", type=Path, help="WordPress WXR export file.")
+    wp_import.add_argument("--report", type=Path, help="Write the JSON report to this path.")
+    wp_mode = wp_import.add_mutually_exclusive_group()
+    wp_mode.add_argument("--dry-run", action="store_true", help="Report planned changes without writing (default).")
+    wp_mode.add_argument("--apply", action="store_true", help="Apply the import.")
+    wp_mode.add_argument("--resume", action="store_true", help="Resume an earlier import and skip completed source IDs.")
+    wp_import.add_argument("--verify", action="store_true", help="Verify a recorded migration run.")
+    wp_import.add_argument("--run", dest="run_id", help="Migration run ID used with --verify.")
+    wp_import.set_defaults(handler=_run_wp_import)
 
     return parser
 

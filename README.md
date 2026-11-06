@@ -1,12 +1,12 @@
 # Cookbook app
 
 A local-first family cookbook built with FastAPI, SQLAlchemy, Alembic, and
-MariaDB. The repository has the complete Task 6 data model and the first
-authentication services (identity, password hashing, sessions, and cookie
-helpers). The app currently exposes health endpoints only; login/logout pages,
-recipe browsing/editing, search, and import are still planned. See the
-[project status](docs/PROJECT-STATUS.md) and [desktop handoff](docs/DESKTOP-HANDOFF.md)
-before starting new work.
+MariaDB. It includes owner login, recipe editing and URL ingestion, public
+recipe pages, category/tag browsing, and filtered search. The WordPress WXR
+importer is implemented and fixture-verified; the source export is kept outside
+Git and must be supplied separately for the real migration. See the
+[project status](docs/PROJECT-STATUS.md), [build roadmap](docs/BUILD-ROADMAP.md),
+and [desktop handoff](docs/DESKTOP-HANDOFF.md) before starting new work.
 
 ## Work on another machine
 
@@ -35,7 +35,23 @@ curl -i http://127.0.0.1:8000/readyz
 
 The app entrypoint runs `alembic upgrade head` at startup. `/healthz` checks
 process liveness; `/readyz` checks the database connection and media-directory
-write access. The current application has no recipe HTTP routes yet.
+write access.
+
+## WordPress migration
+
+The importer is read-only by default. Review a JSON plan before applying it:
+
+```bash
+uv run cookbook import-wp --file /path/to/wordpress-export.xml --dry-run --report migration-report.json
+uv run cookbook import-wp --file /path/to/wordpress-export.xml --apply --report migration-report.json
+uv run cookbook import-wp --file /path/to/wordpress-export.xml --resume
+uv run cookbook import-wp --verify --run <migration-run-id>
+```
+
+The WXR export is deliberately not stored in Git. The real import and its
+corpus-parity verification remain pending until that file is available and its
+dry-run report is reviewed. The report flags the “Pinto Bean Recipes” post as a
+collection while preserving it as a single source record.
 
 ## Development checks
 

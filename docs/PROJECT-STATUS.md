@@ -1,10 +1,10 @@
-# Project status — 2026-11-04
+# Project status — 2026-11-06
 
 ## Repository and task state
 
 - Repository: `https://github.com/bjmaynard01/cookbook-app`.
 - Work on the permanent `dev` branch and push to `origin/dev`; `main` is the stable integration branch. Merge tested milestones from `dev` into `main`.
-- Tasks 10–14 are implemented and integrated on `main`; new work proceeds on `dev`.
+- Tasks 1–18 are complete and integrated on `main`; Task 19 is implemented on `dev` and fixture-verified. The production WordPress export is not present in this workspace, so the corpus import and parity verification remain pending.
 - The full v1 task list and current statuses are in [`BUILD-ROADMAP.md`](BUILD-ROADMAP.md).
 - Check live Git state before acting; this file is a maintained snapshot, not a replacement for Git.
 
@@ -18,13 +18,15 @@ Editors can upload, replace, and remove JPEG, PNG, or WebP recipe images. Pillow
 
 Recipe source URLs are fetched only over HTTP(S) after rejecting non-public DNS answers; connections use a validated, pinned IP and each of up to five redirects is checked again. Fetches have a 20-second deadline and 5 MiB compressed and decoded body caps. HTML extraction returns page metadata, visible text, and raw JSON-LD blocks. Deterministic parsing checks all JSON-LD blocks first, selects the richest supported Recipe candidate, then falls back to schema.org microdata. It preserves ingredient source text and emits sparse drafts with conservative best-effort splits and parse notes.
 
-The optional LLM fallback runs only when deterministic parsing has no ingredient or step content, or its ingredient data is obviously incomplete. It sends at most 24,000 characters of cleaned visible text to the configured OpenAI-compatible chat-completions endpoint at temperature zero, validates the response against `RecipeDraft`, and stamps source provenance locally. Missing or unreadable keys, provider failures, invalid output, and timeouts retain the deterministic draft and add a parse note. The async parser is ready for Task 15 to connect to the editor's ingest/review flow.
+The optional LLM fallback runs only when deterministic parsing has no ingredient or step content, or its ingredient data is obviously incomplete. It sends at most 24,000 characters of cleaned visible text to the configured OpenAI-compatible chat-completions endpoint at temperature zero, validates the response against `RecipeDraft`, and stamps source provenance locally. Missing or unreadable keys, provider failures, invalid output, and timeouts retain the deterministic draft and add a parse note. Task 15 connects the async parser to the editor's ingest/review flow.
 
-Task 14 verification passed **541 tests** against disposable tmpfs MariaDB, and the Docker image built successfully. The focused parser/config/extraction suite passed **56 tests**. One existing Starlette/httpx deprecation warning remains. No schema migration was added for Tasks 10–14.
+The public app now serves recipe pages, category/tag browsing, and filtered search. Task 19 adds `cookbook import-wp`: a bounded WXR parser, dry-run JSON report, title-based slug collision handling, category hierarchy mapping, safe original-image fetch/storage, legacy aliases, per-recipe audit, resume, and `--verify`. Fixture tests cover published/draft handling, line-level plain-text parsing, category/page aliases, slug collisions, dry-run no-write behavior, import/resume idempotency, image failure isolation, and the verification gate. The discovery-identified “Pinto Bean Recipes” post remains included as a flagged collection record.
+
+Task 19 verification passed **569 tests** against a fresh disposable tmpfs MariaDB, `alembic check` found no schema drift, and the Docker image built successfully. The WordPress fixture integration test passed import, image storage/failure isolation, resume, and verification. One existing Starlette/httpx deprecation warning remains. No schema migration was added.
 
 ## Remaining product work
 
-Editor ingest review/save is next, followed by public recipe pages, browse/search, WordPress migration, and backup/restore/cutover verification. See the roadmap for task boundaries and dependencies.
+Task 20, backup/restore and cutover verification, is next. The actual WXR export is still absent, so importing and verifying the real recipe corpus and benchmarking search against it remain pending before production cutover. See the roadmap for task boundaries and dependencies.
 
 ## Local Windows development data
 
