@@ -5,7 +5,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import anyio
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.templating import Jinja2Templates
 
 from ..auth.sessions import LoadedSession
@@ -20,6 +20,7 @@ from .browse_service import (
     get_tag_browse_data,
 )
 from .service import get_recipe_by_slug
+from .search_service import SEARCH_MAX_LENGTH, search_recipes
 
 router = APIRouter()
 templates = Jinja2Templates(directory=Path(__file__).resolve().parent.parent / "templates")
@@ -164,6 +165,38 @@ async def public_tag(request: Request, slug: str):
             "selected_tag": None,
             "max_minutes": None,
             "time_filters": (),
+        },
+    )
+
+
+@router.get("/search", name="public_search")
+async def public_search(
+    request: Request,
+    q: str = Query(default="", max_length=SEARCH_MAX_LENGTH),
+    category: str | None = Query(default=None, max_length=200),
+    tag: str | None = Query(default=None, max_length=200),
+    max_minutes: int | None = None,
+):
+    if max_minutes not in TIME_FILTERS:
+        max_minutes = None
+    async with session_scope() as db:
+        data = await search_recipes(
+            db,
+            query=q,
+            category_slug=category,
+            tag_slug=tag,
+            max_minutes=max_minutes,
+        )
+    media_dir = request.app.state.settings.media_dir
+    return _public_page(
+        request,
+        "public_search.html",
+        {
+            "search": data,
+            "recipes": [
+                _card_context(card, media_dir) for card in data.recipes
+            ],
+            "time_filters": TIME_FILTERS,
         },
     )
 

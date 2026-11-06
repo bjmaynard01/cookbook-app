@@ -203,6 +203,8 @@ class Recipe(Base):
 
     __table_args__ = (
         UniqueConstraint("source_system", "source_id", name="uq_recipes_source"),
+        Index("ft_recipes_title", "title", mysql_prefix="FULLTEXT"),
+        Index("ft_recipes_description", "description", mysql_prefix="FULLTEXT"),
     )
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -266,6 +268,7 @@ class RecipeItem(Base):
 
     __table_args__ = (
         UniqueConstraint("section_id", "position", name="uq_items_section_position"),
+        Index("ft_recipe_items_raw_text", "raw_text", mysql_prefix="FULLTEXT"),
         {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
     )
 
@@ -293,6 +296,7 @@ class Category(Base):
     __table_args__ = (
         UniqueConstraint("slug", name="uq_categories_slug"),
         UniqueConstraint("position", name="uq_categories_position"),
+        Index("ft_categories_name", "name", mysql_prefix="FULLTEXT"),
         {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
     )
 
@@ -314,6 +318,7 @@ class Tag(Base):
 
     __table_args__ = (
         UniqueConstraint("slug", name="uq_tags_slug"),
+        Index("ft_tags_name", "name", mysql_prefix="FULLTEXT"),
         {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
     )
 

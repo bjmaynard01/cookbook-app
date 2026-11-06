@@ -54,7 +54,7 @@ class TagBrowseData:
     recipes: tuple[RecipeCardData, ...]
 
 
-async def _recipe_cards(
+async def build_recipe_cards(
     db: AsyncSession, recipes: list[Recipe]
 ) -> tuple[RecipeCardData, ...]:
     if not recipes:
@@ -151,7 +151,7 @@ async def get_home_browse_data(db: AsyncSession) -> HomeBrowseData:
     ]
 
     return HomeBrowseData(
-        featured=await _recipe_cards(db, list(featured_rows)),
+        featured=await build_recipe_cards(db, list(featured_rows)),
         categories=tuple(categories),
         popular_tags=popular_tags,
     )
@@ -224,7 +224,7 @@ async def get_category_browse_data(
 
     return CategoryBrowseData(
         category=category,
-        recipes=await _recipe_cards(db, recipes),
+        recipes=await build_recipe_cards(db, recipes),
         tags=tags,
         selected_tag=selected_tag,
         max_minutes=max_minutes,
@@ -250,4 +250,4 @@ async def get_tag_browse_data(db: AsyncSession, slug: str) -> TagBrowseData | No
         .scalars()
         .all()
     )
-    return TagBrowseData(tag=tag, recipes=await _recipe_cards(db, recipes))
+    return TagBrowseData(tag=tag, recipes=await build_recipe_cards(db, recipes))

@@ -1,0 +1,74 @@
+{% extends "public_browse_base.html" %}
+{% block title %}Search recipes · Cookbook{% endblock %}
+{% block browse_content %}
+<section aria-labelledby="search-title">
+  <h1 id="search-title">Search recipes</h1>
+  <p class="listing-intro">Find recipes by title, category, tag, ingredient, or instructions.</p>
+  <form class="search-form" action="/search" method="get">
+    <label for="recipe-query">Recipe, ingredient, or keyword</label>
+    <div class="browse-search">
+      <input id="recipe-query" type="search" name="q" value="{{ search.query }}" maxlength="200" placeholder="Try tomato soup or sourdough">
+      <button type="submit">Search</button>
+    </div>
+    <label for="category-scope">Category</label>
+    <div class="search-scope">
+      <select id="category-scope" name="category">
+        <option value="">All categories</option>
+        {% for entry in search.categories %}
+        <option value="{{ entry.category.slug }}" {% if search.selected_category and search.selected_category.id == entry.category.id %}selected{% endif %}>{{ entry.category.name }} ({{ entry.recipe_count }})</option>
+        {% endfor %}
+      </select>
+      {% if search.max_minutes %}<input type="hidden" name="max_minutes" value="{{ search.max_minutes }}">{% endif %}
+      {% if search.selected_tag %}<input type="hidden" name="tag" value="{{ search.selected_tag.slug }}">{% endif %}
+      <button type="submit">Apply category</button>
+    </div>
+  </form>
+</section>
+
+<div class="browse-filters" aria-label="Narrow search results">
+  <section class="time-filters" aria-labelledby="search-time-title">
+    <h2 id="search-time-title">Total time</h2>
+    <ul class="time-filter-list">
+      <li><a class="browse-chip" href="/search?q={{ search.query|urlencode }}{% if search.selected_category %}&amp;category={{ search.selected_category.slug|urlencode }}{% endif %}{% if search.selected_tag %}&amp;tag={{ search.selected_tag.slug|urlencode }}{% endif %}" {% if not search.max_minutes %}aria-current="true"{% endif %}>Any time</a></li>
+      {% for minutes in time_filters %}
+      <li><a class="browse-chip" href="/search?q={{ search.query|urlencode }}{% if search.selected_category %}&amp;category={{ search.selected_category.slug|urlencode }}{% endif %}{% if search.selected_tag %}&amp;tag={{ search.selected_tag.slug|urlencode }}{% endif %}&amp;max_minutes={{ minutes }}" {% if search.max_minutes == minutes %}aria-current="true"{% endif %}>{{ minutes }} minutes or less</a></li>
+      {% endfor %}
+    </ul>
+  </section>
+  <section class="semantic-tags" aria-labelledby="search-tag-title">
+    <h2 id="search-tag-title">Filter by tag</h2>
+    {% if search.tags %}
+    <ul class="tag-list">
+      {% for entry in search.tags %}
+      <li><a class="browse-chip" href="/search?q={{ search.query|urlencode }}{% if search.selected_category %}&amp;category={{ search.selected_category.slug|urlencode }}{% endif %}{% if search.max_minutes %}&amp;max_minutes={{ search.max_minutes }}{% endif %}{% if not (search.selected_tag and search.selected_tag.id == entry.tag.id) %}&amp;tag={{ entry.tag.slug|urlencode }}{% endif %}" {% if search.selected_tag and search.selected_tag.id == entry.tag.id %}aria-current="true"{% endif %}>{{ entry.tag.name }} <small>{{ entry.recipe_count }}</small></a></li>
+      {% endfor %}
+    </ul>
+    {% else %}<p>No tags are available yet.</p>{% endif %}
+  </section>
+</div>
+
+<section aria-label="Search results">
+  {% if not search.tokens %}
+  <p class="empty-state">Enter a word or ingredient with at least two letters to search your recipes. A single number is also accepted.</p>
+  {% elif recipes %}
+  <p class="listing-count">{{ recipes|length }} {{ "recipe" if recipes|length == 1 else "recipes" }} found for “{{ search.query }}”{% if search.selected_category %} in {{ search.selected_category.name }}{% endif %}{% if search.max_minutes %} · {{ search.max_minutes }} minutes or less{% endif %}{% if search.selected_tag %} · tagged {{ search.selected_tag.name }}{% endif %}</p>
+  <div class="recipe-card-list">
+    {% for card in recipes %}{% include "recipe_card.html" %}{% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <p>No recipes matched “{{ search.query }}”{% if search.selected_category %} in {{ search.selected_category.name }}{% endif %}{% if search.max_minutes %} within {{ search.max_minutes }} minutes{% endif %}{% if search.selected_tag %} with the tag {{ search.selected_tag.name }}{% endif %}.</p>
+    <h2>Try a category or tag</h2>
+    <ul class="tag-list">
+      {% for entry in search.suggested_categories %}
+      {% if not search.selected_category or search.selected_category.id != entry.category.id %}<li><a class="browse-chip" href="/search?q={{ search.query|urlencode }}&amp;category={{ entry.category.slug|urlencode }}">{{ entry.category.name }} <small>{{ entry.recipe_count }}</small></a></li>{% endif %}
+      {% endfor %}
+      {% for entry in search.suggested_tags %}
+      {% if not search.selected_tag or search.selected_tag.id != entry.tag.id %}<li><a class="browse-chip" href="/search?q={{ search.query|urlencode }}&amp;tag={{ entry.tag.slug|urlencode }}">{{ entry.tag.name }} <small>{{ entry.recipe_count }}</small></a></li>{% endif %}
+      {% endfor %}
+    </ul>
+    <p><a href="/search">Clear search filters</a></p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

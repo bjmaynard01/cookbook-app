@@ -6,6 +6,8 @@
 __pycache__
 *.py[cod]
 .pytest_cache
+.pytest-*
+.tmp-task*
 pytest-cache-files-*/
 media/
 wp-exports/

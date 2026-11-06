@@ -13,6 +13,10 @@
   .browse-intro { margin: 0 0 2.25rem; }
   .browse-search { display: flex; max-width: 38rem; gap: .6rem; margin-top: 1.2rem; }
   .browse-search input { flex: 1; min-width: 0; margin: 0; }
+  .search-form { max-width: 38rem; }
+  .search-form > label { margin: .9rem 0 .3rem; color: #45443d; }
+  .search-scope { display: flex; gap: .6rem; }
+  .search-scope select { flex: 1; min-width: 0; padding: .5rem .6rem; border: 1px solid #ccc; border-radius: 6px; background: #fff; color: inherit; font: inherit; }
   .browse-section { margin: 2.5rem 0; }
   .recipe-card-list { display: grid; gap: .85rem; }
   .recipe-card { display: grid; grid-template-columns: 8.5rem minmax(0, 1fr); gap: 1rem; align-items: center; padding: .85rem; background: #fff; border: 1px solid #e5e2d9; border-radius: .7rem; }
@@ -49,6 +53,7 @@
     .recipe-card h3 { font-size: 1rem; }
     .recipe-card-taxonomy { display: none; }
     .browse-search { align-items: stretch; }
+    .search-scope { align-items: stretch; flex-direction: column; }
   }
   @media print {
     .container { width: auto; padding: 0; }

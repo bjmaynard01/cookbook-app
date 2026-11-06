@@ -96,8 +96,8 @@ APP_TABLES = {
 ALEMBIC_VERSION_TABLE = "alembic_version"
 EXPECTED_BASE_TABLES = APP_TABLES | {ALEMBIC_VERSION_TABLE}
 
-# Expected migration head after the full forward chain through v6.
-EXPECTED_HEAD = "e4c7a91d2f30"
+# Expected migration head after the full forward chain through v7.
+EXPECTED_HEAD = "f18a6c4d0e72"
 
 # --------------------------------------------------------------------------
 # Locked key sets (explicit). The invariant test discovers ALL application
