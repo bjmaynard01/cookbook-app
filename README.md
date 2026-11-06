@@ -52,7 +52,8 @@ uv run cookbook import-wp --verify --run <migration-run-id>
 The WXR export is deliberately not stored in Git. `--retry-images` retries only
 failed original-image fetches for a completed run, and refuses a source whose
 hash has changed. The 2026-11-06 corpus was imported and verified; one image
-with an unsafe redirect remains listed in the verification report.
+with an unsafe redirect is recorded as an owner-accepted exception in the
+migration audit.
 
 ## Development checks
 

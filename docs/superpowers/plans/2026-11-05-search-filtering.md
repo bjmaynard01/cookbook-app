@@ -24,6 +24,10 @@ Implement public recipe search at `/search?q=` with MariaDB full-text indexes, r
 
 Task 18 is implemented. MariaDB 11 accepted all five FULLTEXT indexes and the search integration query; both migration upgrade and downgrade were verified. The focused search test passed, the full suite passed (**558 passed**) with `DEBUG=false`, and the Docker image built.
 
-## Validation limits
+## Real-corpus tokenizer benchmark (2026-11-06)
 
-There is no migrated recipe corpus in this workspace yet, so a meaningful corpus benchmark cannot be run. Correctness and ranking were validated with representative fixture data; benchmark the default MariaDB tokenizer against the actual imported collection during Task 19 and adjust only if that evidence warrants it.
+The benchmark imported all 391 published WXR recipes into a fresh disposable MariaDB 11 database. Image fetching was disabled for this text-only run. It exercised the existing `search_recipes` path, which combines natural-language FULLTEXT ranking with case-insensitive substring fallback. MariaDB InnoDB FULLTEXT excludes words shorter than three characters; the fallback is what keeps short and prefix queries useful ([MariaDB FULLTEXT overview](https://mariadb.com/docs/server/ha-and-performance/optimization-and-tuning/optimization-and-indexes/full-text-indexes/full-text-index-overview)).
+
+Representative results were: `chicken` 77 recipes, `pie` 106, `mac` 14, `bbq` 8, `pinto beans` 46, and `crock pot` 112. Short/prefix searches also worked (`pi` returned 266). One-character alphabetic `x` returned no results as designed. Matching queries took 44–67 ms in this local disposable setup; the one-character no-result query took 5.2 ms. Numeric-only `2` returned 370 of 391 recipes, showing that quantity searches are very broad; consider separate search-quality tuning if that becomes a user concern.
+
+No tokenizer change is indicated: the current word parser plus partial-match fallback preserves expected common, short, and prefix searches on the imported corpus. No schema or search-code change was made from this benchmark.

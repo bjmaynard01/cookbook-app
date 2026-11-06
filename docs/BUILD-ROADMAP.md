@@ -4,7 +4,7 @@
 **Updated:** 2026-11-06
 **Planned scope:** 20 delivery tasks. Task boundaries can be revised if the owner changes product scope; this count covers the current v1 specification.
 
-This roadmap gives the project one ordered task sheet. Each task may have a separate design and implementation plan. Tasks 1–18 are complete. Task 19's real corpus has been imported and verified; one original image remains unavailable after the safe fetcher rejected its redirect. No task adds features explicitly excluded from the approved v1 spec.
+This roadmap gives the project one ordered task sheet. Each task may have a separate design and implementation plan. Tasks 1–19 are complete. Task 19's real corpus has been imported and verified; the owner accepted the one unavailable original image as a logged exception after the safe fetcher rejected its redirect. No task adds features explicitly excluded from the approved v1 spec.
 
 ## Branch workflow
 
@@ -31,8 +31,8 @@ This roadmap gives the project one ordered task sheet. Each task may have a sepa
 | 15 | Ingest review and save flow | Complete | Dashboard URL launcher, four review states in the shared form, provenance, duplicate notice, bounded image save, and a four-job ingest pool. [Plan](superpowers/plans/2026-11-05-ingest-review-save.md) |
 | 16 | Public recipe page and legacy redirects | Complete | Anonymous responsive `/r/<slug>` reading pages and exact stored-alias 301 redirects. [Plan](superpowers/plans/2026-11-05-public-recipe-page.md) |
 | 17 | Home, category, and tag browsing | Complete | Featured home index, ordered category/tag lanes, and public recipe lists with category time/tag narrowing. [Plan](superpowers/plans/2026-11-05-public-browsing.md) |
-| 18 | Search and result filtering | Complete | MariaDB FULLTEXT search with title/semantic/body ranking, partial matching, category/time/tag filters, and scoped zero-result suggestions. [Plan](superpowers/plans/2026-11-05-search-filtering.md). Benchmark tokenizer behavior after Task 19 imports the real corpus. |
-| 19 | WordPress migration importer | Imported and verified; one image pending owner acceptance | 391 published posts, category pages, aliases, and 181 validated original images imported. Four ingredient-less posts are recorded as owner-approved exceptions; one unsafe image redirect is listed in the verification report. [Plan](superpowers/plans/2026-11-06-wordpress-importer.md) |
+| 18 | Search and result filtering | Complete | MariaDB FULLTEXT search with title/semantic/body ranking, partial matching, category/time/tag filters, and scoped zero-result suggestions. The real-corpus tokenizer benchmark is recorded in the [plan](superpowers/plans/2026-11-05-search-filtering.md). |
+| 19 | WordPress migration importer | Complete; one accepted image exception | 391 published posts, category pages, aliases, and 181 validated original images imported. Four ingredient-less posts are recorded as owner-approved exceptions; post 1957's unsafe image redirect is recorded as an owner-accepted exception. [Plan](superpowers/plans/2026-11-06-wordpress-importer.md) |
 | 20 | Backup, restore, and production cutover gate | Planned | Explicit-target backup/restore tooling and the required isolated restore and migration verification. |
 
 ## Order and dependencies
