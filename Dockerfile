@@ -25,7 +25,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH"
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl \
+      ca-certificates curl mariadb-client \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd cookbook && useradd -m -g cookbook cookbook
 WORKDIR /app

@@ -188,6 +188,117 @@ def test_recovery_requires_confirmation_and_named_existing_account(monkeypatch, 
     probe(body)
 
 
+RESTORE_FLAGS = {
+    "--sql": "backup/cookbook-2026-11-10.sql.gz",
+    "--media-archive": "backup/media-2026-11-10.tar.gz",
+    "--manifest": "backup/manifest-2026-11-10.json",
+    "--db-url": "mariadb+aiomysql://cookbook:secret@127.0.0.1/cookbook",
+    "--media-dir": "media/restore-target",
+}
+
+
+def _restore_argv(missing=None):
+    argv = ["restore"]
+    for flag, value in RESTORE_FLAGS.items():
+        if flag != missing:
+            argv += [flag, value]
+    return argv
+
+
+def install_fake_cli_backup(monkeypatch):
+    """Spy module occupying cookbook.cli_backup; proves dispatch without the real file."""
+    import types
+
+    fake = types.ModuleType("cookbook.cli_backup")
+    fake.recorded = []
+
+    def run_backup_command(args):
+        fake.recorded.append(("backup", args))
+        return 7
+
+    def run_restore_command(args):
+        fake.recorded.append(("restore", args))
+        return 8
+
+    fake.run_backup_command = run_backup_command
+    fake.run_restore_command = run_restore_command
+    monkeypatch.setitem(sys.modules, "cookbook.cli_backup", fake)
+    return fake
+
+
+def test_backup_parser_requires_out(tmp_path):
+    module = cli()
+    args = module.build_parser().parse_args(["backup", "--out", str(tmp_path / "backups")])
+    assert args.command == "backup"
+    assert args.out == tmp_path / "backups"
+    assert call(["backup"]) != 0  # --out is required, no silent default
+
+
+def test_restore_parser_accepts_explicit_sources_and_targets():
+    args = cli().build_parser().parse_args(_restore_argv())
+    assert args.command == "restore"
+    for flag, expected in RESTORE_FLAGS.items():
+        attribute = flag.lstrip("-").replace("-", "_")
+        value = getattr(args, attribute)
+        if flag == "--db-url":
+            assert value == expected  # URL stays a plain string
+        else:
+            assert value == Path(expected)
+    assert args.replace is False
+
+
+@pytest.mark.parametrize("flag", list(RESTORE_FLAGS))
+def test_restore_missing_required_flag_refused(flag):
+    assert call(_restore_argv(missing=flag)) != 0
+
+
+def test_restore_replace_flag_defaults_false_and_can_be_set():
+    assert cli().build_parser().parse_args(_restore_argv()).replace is False
+    assert cli().build_parser().parse_args(_restore_argv() + ["--replace"]).replace is True
+
+
+def test_parsing_does_not_import_cli_backup(monkeypatch):
+    # sys.modules = None makes any import of the module raise ImportError,
+    # so this proves parsing alone never triggers the lazy import.
+    monkeypatch.setitem(sys.modules, "cookbook.cli_backup", None)
+    assert cli().build_parser().parse_args(["backup", "--out", "backups"]).command == "backup"
+    assert cli().build_parser().parse_args(_restore_argv()).command == "restore"
+
+
+def test_unrelated_command_does_not_load_backup_module(monkeypatch, tmp_path):
+    monkeypatch.setitem(sys.modules, "cookbook.cli_backup", None)
+    assert call(["init-secret", "--out", str(tmp_path / "secret.key")]) == 0
+
+
+def test_backup_dispatch_forwards_args_to_cli_backup(monkeypatch, tmp_path):
+    fake = install_fake_cli_backup(monkeypatch)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("backup dispatch read DB configuration inside cli.py")
+    monkeypatch.setattr(cli(), "cli_config", forbidden)
+
+    destination = tmp_path / "backups"
+    assert call(["backup", "--out", str(destination)]) == 7
+    (name, args), = fake.recorded
+    assert name == "backup" and args.out == destination
+
+
+def test_restore_dispatch_forwards_args_and_replace_flag(monkeypatch):
+    fake = install_fake_cli_backup(monkeypatch)
+    assert call(_restore_argv()) == 8
+    (name, args), = fake.recorded
+    assert name == "restore"
+    assert args.sql == Path(RESTORE_FLAGS["--sql"])
+    assert args.media_archive == Path(RESTORE_FLAGS["--media-archive"])
+    assert args.manifest == Path(RESTORE_FLAGS["--manifest"])
+    assert args.db_url == RESTORE_FLAGS["--db-url"]
+    assert args.media_dir == Path(RESTORE_FLAGS["--media-dir"])
+    assert args.replace is False
+    assert call(_restore_argv() + ["--replace"]) == 8
+    name, args = fake.recorded[-1]
+    assert name == "restore" and args.replace is True
+
+
 def test_cli_and_http_share_one_bootstrap_guard(monkeypatch, tmp_path):
     from test_setup_routes import submit, web_probe
     from test_login_routes import token

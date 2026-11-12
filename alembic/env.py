@@ -27,6 +27,12 @@ target_metadata = Base.metadata
 
 
 def _url() -> str:
+    # Programmatic maintenance tools and isolated tests may supply an explicit
+    # URL through Config.attributes. This keeps those operations independent
+    # of an ambient .env file; normal CLI/container startup still uses Settings.
+    explicit_url = config.attributes.get("database_url")
+    if isinstance(explicit_url, str) and explicit_url:
+        return explicit_url
     return get_settings().database_url
 
 

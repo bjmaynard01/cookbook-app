@@ -1,10 +1,10 @@
-# Project status — 2026-11-06
+# Project status — 2026-11-12
 
 ## Repository and task state
 
 - Repository: `https://github.com/bjmaynard01/cookbook-app`.
 - Work on the permanent `dev` branch and push to `origin/dev`; `main` is the stable integration branch. Merge tested milestones from `dev` into `main`.
-- Tasks 1–18 are complete and integrated on `main`; Task 19 is implemented on `dev` and fixture-verified. The production WordPress export is not present in this workspace, so the corpus import and parity verification remain pending.
+- Tasks 1–19 are complete; Task 20 backup/restore is implemented on `dev` and its isolated MariaDB drill passed. Check live Git state before treating task changes as pushed or integrated.
 - The full v1 task list and current statuses are in [`BUILD-ROADMAP.md`](BUILD-ROADMAP.md).
 - Check live Git state before acting; this file is a maintained snapshot, not a replacement for Git.
 
@@ -26,7 +26,9 @@ Task 19 verification passed **573 tests** against a fresh disposable tmpfs Maria
 
 ## Remaining product work
 
-Task 20, backup/restore and cutover verification, is next. The real WXR corpus is imported and verified, and the Task 18 tokenizer benchmark is recorded in its plan. The single missing original image is an owner-accepted exception recorded in the migration audit. Production cutover still requires the isolated restore and migration verification gate. See the roadmap for task boundaries and dependencies.
+The build tasks 1–20 are complete. Task 20 adds `cookbook backup` and `cookbook restore` with explicit targets, manifest/digest verification, safe media staging, schema guards, `--replace` for both populated destinations, and post-restore row/media/readiness verification. The disposable MariaDB drill passed: a backup recorded at v6 restored into a separate schema, retained recipe and import audit rows and media, upgraded to v7, passed `alembic check`, and served the restored public recipe route. The Docker image includes the MariaDB client tools. The Task 20/CLI/integration suite passed 146 tests. The complete suite passed 707 tests with 1 Windows-only skip for the MariaDB-client-dependent integration test; that drill passed in the container. See the [backup/restore instructions](../README.md#database-and-media-backuprestore) and [Task 20 plan](superpowers/plans/2026-11-10-backup-restore.md).
+
+Production cutover has not happened. Before cutover, the owner must choose a quiet window, stop editor writes, create and protect a fresh backup, and run a restore drill against the intended isolated production-like target. CI/CD and external-user environments are future work outside the current 20-task local MVP scope. The real WXR corpus is imported and verified; the unavailable original image remains an owner-accepted exception in the migration audit.
 
 ## Local Windows development data
 

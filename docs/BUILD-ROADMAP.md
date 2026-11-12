@@ -1,10 +1,10 @@
 # Cookbook App Build Roadmap
 
 **Source of truth:** `PRODUCT.md` and the approved design in `docs/superpowers/specs/2026-09-20-cookbook-design.md`.
-**Updated:** 2026-11-06
+**Updated:** 2026-11-12
 **Planned scope:** 20 delivery tasks. Task boundaries can be revised if the owner changes product scope; this count covers the current v1 specification.
 
-This roadmap gives the project one ordered task sheet. Each task may have a separate design and implementation plan. Tasks 1–19 are complete. Task 19's real corpus has been imported and verified; the owner accepted the one unavailable original image as a logged exception after the safe fetcher rejected its redirect. No task adds features explicitly excluded from the approved v1 spec.
+This roadmap gives the project one ordered task sheet. Each task may have a separate design and implementation plan. Tasks 1–20 are complete. Task 19's real corpus has been imported and verified; the owner accepted the one unavailable original image as a logged exception after the safe fetcher rejected its redirect. Task 20 implements backup/restore and passes an isolated MariaDB recovery drill. Production cutover remains a human operational gate. No task adds features explicitly excluded from the approved v1 spec.
 
 ## Branch workflow
 
@@ -33,7 +33,7 @@ This roadmap gives the project one ordered task sheet. Each task may have a sepa
 | 17 | Home, category, and tag browsing | Complete | Featured home index, ordered category/tag lanes, and public recipe lists with category time/tag narrowing. [Plan](superpowers/plans/2026-11-05-public-browsing.md) |
 | 18 | Search and result filtering | Complete | MariaDB FULLTEXT search with title/semantic/body ranking, partial matching, category/time/tag filters, and scoped zero-result suggestions. The real-corpus tokenizer benchmark is recorded in the [plan](superpowers/plans/2026-11-05-search-filtering.md). |
 | 19 | WordPress migration importer | Complete; one accepted image exception | 391 published posts, category pages, aliases, and 181 validated original images imported. Four ingredient-less posts are recorded as owner-approved exceptions; post 1957's unsafe image redirect is recorded as an owner-accepted exception. [Plan](superpowers/plans/2026-11-06-wordpress-importer.md) |
-| 20 | Backup, restore, and production cutover gate | Planned | Explicit-target backup/restore tooling and the required isolated restore and migration verification. |
+| 20 | Backup, restore, and production cutover gate | Complete | Explicit-target MariaDB/media backup and restore; isolated older-revision restore, forward migration, drift, readiness, and public route verification. Production cutover is still a human gate. [Plan](superpowers/plans/2026-11-10-backup-restore.md) |
 
 ## Order and dependencies
 

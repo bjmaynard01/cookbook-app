@@ -71,6 +71,20 @@ def _run_wp_import(args: argparse.Namespace) -> int:
     return run_import_command(args)
 
 
+def _run_backup(args: argparse.Namespace) -> int:
+    # Lazy import: importing cli.py (e.g. for `init-secret`) must not pull in
+    # backup orchestration or its dependencies.
+    from .cli_backup import run_backup_command
+
+    return run_backup_command(args)
+
+
+def _run_restore(args: argparse.Namespace) -> int:
+    from .cli_backup import run_restore_command
+
+    return run_restore_command(args)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="cookbook",
@@ -147,6 +161,36 @@ def build_parser() -> argparse.ArgumentParser:
     wp_mode.add_argument("--verify", action="store_true", help="Verify a recorded migration run.")
     wp_import.add_argument("--run", dest="run_id", help="Migration run ID used with --retry-images or --verify.")
     wp_import.set_defaults(handler=_run_wp_import)
+
+    backup = subparsers.add_parser(
+        "backup",
+        help="Write a MariaDB dump, media archive, and manifest into --out (never overwrites).",
+    )
+    backup.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Directory that receives cookbook-<UTC-date>.sql.gz, media-<UTC-date>.tar.gz, manifest-<UTC-date>.json.",
+    )
+    backup.set_defaults(handler=_run_backup)
+
+    restore = subparsers.add_parser(
+        "restore",
+        help="Restore an explicit backup set into an explicit database and media directory.",
+    )
+    restore.add_argument("--sql", type=Path, required=True, help="SQL dump to import (cookbook-<UTC-date>.sql.gz).")
+    restore.add_argument("--media-archive", type=Path, required=True, help="Media archive to stage/extract (media-<UTC-date>.tar.gz).")
+    restore.add_argument("--manifest", type=Path, required=True, help="Manifest describing the backup set.")
+    # Destination identifiers, kept deliberately distinct from the source flags.
+    # A plain string keeps the URL usable and credential redaction simple downstream.
+    restore.add_argument("--db-url", required=True, help="Destination database URL.")
+    restore.add_argument("--media-dir", type=Path, required=True, help="Explicit media destination directory.")
+    restore.add_argument(
+        "--replace",
+        action="store_true",
+        help="Authorize replacing non-empty target database contents and media directory contents.",
+    )
+    restore.set_defaults(handler=_run_restore)
 
     return parser
 

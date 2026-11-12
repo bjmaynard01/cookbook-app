@@ -37,6 +37,67 @@ The app entrypoint runs `alembic upgrade head` at startup. `/healthz` checks
 process liveness; `/readyz` checks the database connection and media-directory
 write access.
 
+## Database and media backup/restore
+
+Run maintenance commands in the built app container so they use the packaged
+`mariadb` and `mariadb-dump` clients. Keep the backup directory on persistent
+storage outside the container. Schedule backup during an owner-managed quiet
+window after stopping editor writes; the backup does not lock application
+writers. The output contains database and media data, so protect it as private
+family data. It excludes `.env` and application secrets.
+
+For the Compose development service, mount a host backup directory at
+`/backups`, then run:
+
+```bash
+docker compose run --rm --entrypoint /opt/venv/bin/cookbook \
+  -v "<host-backup-directory>:/backups" app \
+  backup --out /backups
+```
+
+Restore requires explicit SQL, media archive, manifest, database URL, and media
+directory targets. Check those targets carefully before running it. A populated
+database or media directory is refused unless `--replace` is supplied; that
+flag authorizes replacement of both explicit targets. Restore never drops the
+database and refuses unsupported schema objects, even with `--replace`.
+
+```bash
+docker compose run --rm --entrypoint /opt/venv/bin/cookbook \
+  -v "<host-backup-directory>:/backups" \
+  -v "<host-media-directory>:/media" app restore \
+  --sql /backups/cookbook-<UTC-date>.sql.gz \
+  --media-archive /backups/media-<UTC-date>.tar.gz \
+  --manifest /backups/manifest-<UTC-date>.json \
+  --db-url "<explicit-mariadb-url>" --media-dir /media
+```
+
+Pass the database URL through the deployment's protected environment or secret
+mechanism; do not put a real credential in shell history or documentation.
+Restores stop at the Alembic revision recorded in the manifest. Normal app
+startup then applies forward migrations. Production cutover still requires a
+human-reviewed quiet window and isolated restore verification; Task 20 does
+not deploy or cut over production.
+
+### Disposable restore drill
+
+The opt-in integration test creates unique sibling schemas and drops only those
+schemas on its disposable MariaDB server. Its admin URL must name a database
+whose name starts with `cookbook_task20_`; the test refuses other names. Run it
+inside the built image with access to a dedicated test-only MariaDB server:
+
+```bash
+docker run --rm --network <test-network> \
+  -v "$PWD/tests:/app/tests:ro" \
+  -e COOKBOOK_BACKUP_RESTORE_TEST_DB_URL \
+  --entrypoint /opt/venv/bin/pytest cookbook:dev \
+  tests/test_backup_restore_integration.py -q -p no:cacheprovider
+```
+
+Set `COOKBOOK_BACKUP_RESTORE_TEST_DB_URL` in the invoking environment. The drill
+tests backup and restore, row counts, media, migration from an older known
+revision to current head, Alembic drift, readiness, and the restored public
+recipe route. It does not read `.env` or touch the development database.
+
 ## WordPress migration
 
 The importer is read-only by default. Review a JSON plan before applying it:
