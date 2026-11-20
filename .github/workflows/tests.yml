@@ -1,0 +1,130 @@
+# Hosted test suite (Task 1 of the beta CI/CD pipeline).
+#
+# Runs the repository test suite on a clean ubuntu-latest runner against a
+# disposable MariaDB 11 service. Pull requests (including forks) and branch
+# pushes receive identical, secret-free checks: no deployment credentials,
+# no self-hosted runner, and no package write permission.
+#
+# The Task 20 backup/restore drill (tests/test_backup_restore_integration.py)
+# is opt-in: it skips when COOKBOOK_BACKUP_RESTORE_TEST_DB_URL is unset, and
+# when it does run it refuses any database whose name does not start with
+# cookbook_task20_ (safety guard in tests/test_backup_restore_integration.py).
+# Task 2 exercises it in a CI-only image derived from the runtime image, using
+# the same packaged mariadb and mariadb-dump clients without adding pytest to
+# the published runtime.
+name: tests
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Test suite on MariaDB 11
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Only the GitHub-hosted runner is permitted here. Pull-request,
+    # push, workflow-call, and manual-dispatch events must never resolve
+    # to a `[self-hosted, ...]` label; do not add self-hosted runners to
+    # this job or any later re-usable call of this workflow.
+    services:
+      mariadb:
+        image: mariadb:11
+        env:
+          MARIADB_ROOT_PASSWORD: ci-root-password
+          MARIADB_DATABASE: cookbook
+          MARIADB_USER: cookbook
+          MARIADB_PASSWORD: ci-password
+        # tests/test_wp_import_integration.py asserts the disposable DB is at
+        # 127.0.0.1:33061 (the isolated test port from the data-model plan),
+        # so it must be published on 33061, not the dev default 3306.
+        ports:
+          - 33061:3306
+        # The mariadb:11 image ships healthcheck.sh (and the mariadb client),
+        # not mysqladmin, so this healthcheck uses the image-provided script.
+        # Mirrors docker-compose.yml's dev db healthcheck.
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=3s
+          --health-timeout=3s
+          --health-retries=60
+    env:
+      DEBUG: "false"
+      SECRET_KEY: ci-test-secret-key-not-a-real-secret
+      DB_HOST: 127.0.0.1
+      DB_PORT: "33061"
+      DB_NAME: cookbook
+      DB_USER: cookbook
+      DB_PASSWORD: ci-password
+    steps:
+      - name: Check out repository
+        # Matches the current action major used by Ganteva; pinned to v7.0.0.
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.12
+        # Matches the current action major used by Ganteva; pinned to v7.0.0.
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install uv from lock
+        # Pinned to the official v7.0.0 release commit.
+        uses: astral-sh/setup-uv@eb1897b8dc4b5d5bfe39a428a8f2304605e0983c # v7.0.0
+      - name: Install locked dependencies (project + dev group)
+        run: uv sync --locked --group dev
+      - name: Apply migrations to the disposable database
+        run: uv run --locked alembic upgrade head
+      - name: Run the test suite
+        run: uv run --locked --group dev pytest -q -p no:cacheprovider
+
+  # Dependency-audit-only security baseline.
+  #
+  # A separate, read-only job that runs on exactly the same triggers as the
+  # tests job above (pull_request, push to dev/main, workflow_dispatch,
+  # workflow_call). It performs a dependency audit and nothing else: no Python
+  # static scanner, no package installation, no deployment, and no secrets.
+  #
+  # It reads the committed uv.lock and matches the project and dev groups
+  # against PyPI's advisory database (uv audit's default service).
+  # `uv audit --locked` refuses to re-resolve, so the exact lockfile that
+  # will ship is the one audited, including the dev group.
+  dependency-audit:
+    name: Dependency audit (read-only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Same rule as the tests job: GitHub-hosted only. This job must never
+    # resolve to a [self-hosted, ...] label.
+    #
+    # Least privilege: read the repository only. No packages, no write
+    # permission, no secrets — the audit needs only the committed lockfile.
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        # Reuses the same pinned checkout (v7.0.0) as the tests job.
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up uv 0.13.7
+        # Reuses the same pinned setup action (v7.0.0) but pins the uv binary
+        # itself to an exact version so the audit is reproducible.
+        uses: astral-sh/setup-uv@eb1897b8dc4b5d5bfe39a428a8f2304605e0983c # v7.0.0
+        with:
+          version: "0.13.7"
+      - name: Audit locked dependencies (project + dev group)
+        # Dependency audit only. uv audit reads uv.lock and matches the
+      # project and dev groups against PyPI's advisory database. The locked
+      # flag asserts the lockfile stays unchanged, auditing the committed lock.
+        # Deliberately no Python static scanner in this job.
+        run: uv audit --locked

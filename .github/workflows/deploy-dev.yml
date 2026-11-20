@@ -1,0 +1,89 @@
+# Trusted dev delivery pipeline (Task 4 of the beta CI/CD pipeline).
+#
+# Runs on pushes to `dev` and manual dispatch: the hosted test suite always
+# runs for both events. The host build and smoke test (which publishes the
+# `sha-<github.sha>` image) runs only on trusted push to `dev`, never on
+# manual dispatch. The beta deploy on the Ganteva
+# `[self-hosted, dev-workstation]` runner additionally requires the
+# closed-by-default gate: `github.event_name` is exactly `push`,
+# `github.ref` is exactly `refs/heads/dev`, and the repository variable
+# `COOKBOOK_BETA_ENABLED` equals the literal string `true`.
+#
+# `main`, pull requests, and forks can never invoke this workflow, select the
+# self-hosted runner, or publish an image. `packages:write` is granted to the
+# smoke job alone so it may `docker push` the SHA tag; all other jobs keep
+# `contents:read` only.
+name: dev pipeline
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: beta-${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    name: Hosted test suite
+    # Always runs for both permitted events (push to dev, manual dispatch);
+    # the trigger block above is the only gate.
+    uses: ./.github/workflows/tests.yml
+
+  smoke:
+    name: Build, smoke test, and publish SHA image
+    # Trusted push to dev only: never on manual dispatch. Intentionally NOT
+    # gated on COOKBOOK_BETA_ENABLED so beta enablement can be toggled on
+    # later without re-triggering a trusted push (the SHA image is already
+    # available in GHCR by then).
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
+    needs: [tests]
+    # The called workflow's own jobs run on ubuntu-latest; the caller selects
+    # only inputs and token permissions. packages:write is granted to this
+    # invocation alone so the smoke job may `docker push` the SHA tag; the
+    # tests and deploy jobs keep contents:read only. The smoke-test workflow
+    # still rejects publishing unless the invocation is push_image=true from
+    # a push to dev, so this permission cannot leak an image otherwise.
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/smoke-test.yml
+    with:
+      push_image: true
+
+  deploy:
+    name: Deploy beta image to Ganteva dev workstation
+    runs-on: [self-hosted, dev-workstation]
+    # Gated: push event (not manual dispatch), exactly the dev branch, and the
+    # closed-by-default COOKBOOK_BETA_ENABLED repository variable.
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' && vars.COOKBOOK_BETA_ENABLED == 'true' }}
+    needs: [smoke]
+    # Only the two pinned deployment files are fetched, at the exact commit
+    # that passed tests and smoke. The deploy script pulls the
+    # `sha-<github.sha>` image already published by the smoke job, so no
+    # other code from this commit is ever materialized on the runner.
+    steps:
+      - name: Check out pinned deploy files
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Only the deployment entrypoint and its Compose overlay are
+          # materialized on the self-hosted runner; nothing else from the
+          # commit reaches the host.
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            bin/deploy-beta.ps1
+            docker-compose.beta.yml
+      - name: Run beta deployment entrypoint
+        env:
+          COOKBOOK_BETA_ENV_FILE: ${{ vars.COOKBOOK_BETA_ENV_FILE }}
+          COOKBOOK_BETA_DATA_DIR: ${{ vars.COOKBOOK_BETA_DATA_DIR }}
+          COOKBOOK_BETA_PUBLIC_URL: ${{ vars.COOKBOOK_BETA_PUBLIC_URL }}
+          COOKBOOK_BETA_PORT: ${{ vars.COOKBOOK_BETA_PORT }}
+          COOKBOOK_PROXY_NETWORK: ${{ vars.COOKBOOK_PROXY_NETWORK }}
+        run: |
+          powershell -NonInteractive -NoProfile -ExecutionPolicy Bypass -File bin\deploy-beta.ps1 "${{ github.sha }}"

@@ -17,10 +17,11 @@ COPY uv.lock ./
 COPY src ./src
 COPY alembic.ini ./
 COPY alembic ./alembic
-RUN uv sync --frozen --python /usr/local/bin/python
+# The runtime image contains only locked application dependencies.
+RUN uv sync --frozen --no-dev --python /usr/local/bin/python
 
-# ---- final stage ----
-FROM python:3.12-slim AS runtime
+# ---- production runtime base ----
+FROM python:3.12-slim AS runtime-base
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH"
@@ -49,3 +50,16 @@ ENTRYPOINT ["./bin/docker-entrypoint.sh"]
 # (client_identity, TRUSTED_PROXY_CIDRS). Disabling uvicorn's own proxy
 # handling avoids double processing / peer rewriting (auth plan C4).
 CMD ["uvicorn", "cookbook.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]
+
+# ---- CI-only test image: reuses the exact runtime and MariaDB client tools ----
+# Keep pytest and test sources out of the published runtime image.
+FROM runtime-base AS ci-test
+USER root
+COPY --from=builder /usr/local/bin/uv /usr/local/bin/uv
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
+    UV_LINK_MODE=copy
+RUN uv sync --locked --group dev --python /usr/local/bin/python
+COPY tests ./tests
+
+# The default Docker build remains the production runtime used by Compose.
+FROM runtime-base AS runtime

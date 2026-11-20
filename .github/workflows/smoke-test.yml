@@ -1,0 +1,163 @@
+# Build and smoke-test the runtime image; optionally publish only a trusted dev SHA.
+# Caller controls GITHUB_TOKEN permissions. Grant packages:write only for a trusted
+# dev push with push_image=true; check-only callers should grant contents:read only.
+name: runtime smoke test
+
+on:
+  workflow_call:
+    inputs:
+      push_image:
+        description: Publish the tested runtime image for a trusted dev deployment.
+        required: false
+        type: boolean
+        default: false
+    outputs:
+      image:
+        description: Full commit-SHA image reference built and smoke-tested by this workflow.
+        value: ${{ jobs.smoke-test.outputs.image }}
+
+jobs:
+  smoke-test:
+    name: Build and verify runtime image
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      image: ${{ steps.image-reference.outputs.image }}
+    services:
+      mariadb:
+        image: mariadb:11
+        env:
+          MARIADB_ROOT_PASSWORD: ci-root-password
+          MARIADB_ROOT_HOST: "%"
+          MARIADB_DATABASE: cookbook
+          MARIADB_USER: cookbook
+          MARIADB_PASSWORD: ci-password
+        ports:
+          - 33061:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=3s
+          --health-timeout=3s
+          --health-retries=60
+    env:
+      RUNTIME_IMAGE: cookbook:smoke-${{ github.sha }}
+      CI_TEST_IMAGE: cookbook:ci-test-${{ github.sha }}
+      PUBLISHED_IMAGE: ghcr.io/${{ github.repository_owner }}/cookbook:sha-${{ github.sha }}
+      DB_HOST: host.docker.internal
+      DB_PORT: "33061"
+      DB_NAME: cookbook
+      DB_USER: cookbook
+      DB_PASSWORD: ci-password
+      SECRET_KEY: ci-smoke-test-key-not-a-real-secret
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Build final runtime image
+        run: docker build --tag "$RUNTIME_IMAGE" .
+
+      - name: Build test-only image with packaged MariaDB clients
+        run: docker build --target ci-test --tag "$CI_TEST_IMAGE" .
+
+      - name: Record immutable image reference
+        id: image-reference
+        run: echo "image=$PUBLISHED_IMAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Reject publish requests outside a trusted dev push
+        if: ${{ inputs.push_image && (github.event_name != 'push' || github.ref != 'refs/heads/dev') }}
+        run: |
+          echo "::error::Image publishing is permitted only for a push to dev."
+          exit 1
+
+      - name: Start runtime image and verify readiness
+        shell: bash
+        run: |
+          media_dir="$RUNNER_TEMP/cookbook-smoke-media"
+          mkdir -p "$media_dir"
+          chmod 777 "$media_dir"
+          docker run --detach --name cookbook-ci-smoke \
+            --add-host host.docker.internal:host-gateway \
+            --publish 127.0.0.1:8000:8000 \
+            --volume "$media_dir:/media" \
+            --env DB_HOST="$DB_HOST" \
+            --env DB_PORT="$DB_PORT" \
+            --env DB_NAME="$DB_NAME" \
+            --env DB_USER="$DB_USER" \
+            --env DB_PASSWORD="$DB_PASSWORD" \
+            --env SECRET_KEY="$SECRET_KEY" \
+            --env MEDIA_DIR=/media \
+            "$RUNTIME_IMAGE"
+
+          ready=false
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --show-error http://127.0.0.1:8000/readyz >/dev/null; then
+              ready=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" != true ]; then
+            docker logs cookbook-ci-smoke
+            echo "Runtime image did not become ready." >&2
+            exit 1
+          fi
+          curl --fail --silent --show-error http://127.0.0.1:8000/healthz
+          curl --fail --silent --show-error http://127.0.0.1:8000/readyz
+          curl --fail --silent --show-error http://127.0.0.1:8000/ >/dev/null
+          docker exec cookbook-ci-smoke mariadb --version
+          docker exec cookbook-ci-smoke mariadb-dump --version
+
+      - name: Create the guarded Task 20 admin database
+        shell: bash
+        env:
+          DB_ROOT_PASSWORD: ci-root-password
+        run: |
+          defaults_file="$RUNNER_TEMP/mariadb-client.cnf"
+          trap 'rm -f "$defaults_file"' EXIT
+          cat > "$defaults_file" <<EOF
+          [client]
+          user=root
+          password=$DB_ROOT_PASSWORD
+          host=host.docker.internal
+          port=33061
+          EOF
+          chmod 600 "$defaults_file"
+          docker run --rm \
+            --add-host host.docker.internal:host-gateway \
+            --volume "$defaults_file:/tmp/mariadb-client.cnf:ro" \
+            --entrypoint mariadb \
+            "$CI_TEST_IMAGE" \
+            --defaults-extra-file=/tmp/mariadb-client.cnf \
+            --execute='CREATE DATABASE cookbook_task20_ci CHARACTER SET utf8mb4'
+
+      - name: Run Task 20 backup and restore drill with image clients
+        run: >-
+          docker run --rm
+          --add-host host.docker.internal:host-gateway
+          --env COOKBOOK_BACKUP_RESTORE_TEST_DB_URL
+          --entrypoint uv
+          "$CI_TEST_IMAGE"
+          run --locked --group dev pytest
+          tests/test_backup_restore_integration.py
+          -q -p no:cacheprovider
+        env:
+          COOKBOOK_BACKUP_RESTORE_TEST_DB_URL: mysql+asyncmy://root:ci-root-password@host.docker.internal:33061/cookbook_task20_ci?charset=utf8mb4
+
+      - name: Publish the tested image by full commit SHA
+        if: ${{ inputs.push_image && github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          GHCR_USERNAME: ${{ github.actor }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USERNAME" --password-stdin
+          docker tag "$RUNTIME_IMAGE" "$PUBLISHED_IMAGE"
+          docker push "$PUBLISHED_IMAGE"
+
+      - name: Remove smoke container and registry session
+        if: always()
+        run: |
+          docker rm --force cookbook-ci-smoke 2>/dev/null || true
+          docker logout ghcr.io 2>/dev/null || true
+

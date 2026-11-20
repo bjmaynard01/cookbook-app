@@ -10,6 +10,10 @@ wp-exports/
 
 # Local env (dev values); .env.example is the committed template
 .env
+.env.beta
+.env.beta.*
+cookbook-beta.env
+cookbook-beta.env.*
 
 # Generated SECRET_KEY file (`cookbook init-secret`)
 /secret.key
@@ -25,5 +29,7 @@ reference/
 
 # Local media scratch dir if the app is run off-Docker in dev
 media/
+/.cookbook-beta/
+/.cookbook-beta-data/
 
 *SESSION-HANDOFF*

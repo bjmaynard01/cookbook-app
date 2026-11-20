@@ -1,0 +1,61 @@
+# Cookbook beta is deliberately isolated from the local Compose project.
+# Credentials, network names and ports are supplied by the explicit protected
+# env file passed with `docker compose --env-file`. The data path is an explicit
+# host setting passed by the deploy entrypoint.
+services:
+  db:
+    image: mariadb:11
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${BETA_DB_ROOT_PASSWORD:?BETA_DB_ROOT_PASSWORD is required}
+      MARIADB_DATABASE: ${BETA_DB_NAME:?BETA_DB_NAME is required}
+      MARIADB_USER: ${BETA_DB_USER:?BETA_DB_USER is required}
+      MARIADB_PASSWORD: ${BETA_DB_PASSWORD:?BETA_DB_PASSWORD is required}
+    volumes:
+      - type: bind
+        source: ${COOKBOOK_BETA_DATA_DIR:?COOKBOOK_BETA_DATA_DIR is required}/db
+        target: /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+    networks:
+      - backend
+
+  app:
+    image: ${COOKBOOK_IMAGE:?COOKBOOK_IMAGE must be an immutable SHA image reference}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: "3306"
+      DB_NAME: ${BETA_DB_NAME:?BETA_DB_NAME is required}
+      DB_USER: ${BETA_DB_USER:?BETA_DB_USER is required}
+      DB_PASSWORD: ${BETA_DB_PASSWORD:?BETA_DB_PASSWORD is required}
+      SECRET_KEY: ${BETA_SECRET_KEY:?BETA_SECRET_KEY is required}
+      MEDIA_DIR: /media
+      SESSION_TTL_HOURS: "12"
+      TRUSTED_PROXY_CIDRS: ${BETA_TRUSTED_PROXY_CIDRS:?BETA_TRUSTED_PROXY_CIDRS is required}
+      COOKIE_SECURE: "true"
+    volumes:
+      - type: bind
+        source: ${COOKBOOK_BETA_DATA_DIR:?COOKBOOK_BETA_DATA_DIR is required}/app
+        target: /media
+      - type: bind
+        source: ${COOKBOOK_BETA_DATA_DIR:?COOKBOOK_BETA_DATA_DIR is required}/backups
+        target: /backups
+    ports:
+      - "127.0.0.1:${COOKBOOK_BETA_PORT:?COOKBOOK_BETA_PORT is required}:8000"
+    networks:
+      - backend
+      - proxy
+
+networks:
+  backend:
+    internal: true
+  proxy:
+    external: true
+    name: ${COOKBOOK_PROXY_NETWORK:?COOKBOOK_PROXY_NETWORK must name the existing reverse-proxy network}

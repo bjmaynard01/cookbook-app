@@ -11,3 +11,7 @@ __pycache__
 pytest-cache-files-*/
 media/
 wp-exports/
+maynardfamilycookbook.WordPress.*.xml
+wp-import-*.json
+*.task*/
+*.tmp*/
